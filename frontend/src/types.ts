@@ -45,6 +45,7 @@ export interface CommandResult {
   clarification_message?: string;
   entities: Record<string, any>;
   latency_ms: number;
+  live_response?: string;
   model_name: string;
   top_probabilities: Record<string, number>;
 }

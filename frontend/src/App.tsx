@@ -504,6 +504,14 @@ export default function App(): React.JSX.Element {
                 )}
               </div>
 
+              {/* Real-time Answer / Execution Preview */}
+              {commandResult.live_response && (
+                <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-xs text-emerald-300 flex items-center gap-2">
+                  <span className="font-bold text-white text-[11px] uppercase tracking-wider px-2 py-0.5 rounded bg-emerald-500/20">Answer</span>
+                  <span className="font-medium text-emerald-200 text-sm">{commandResult.live_response}</span>
+                </div>
+              )}
+
               {/* Confidence Progress Bar */}
               <div className="w-full h-1.5 rounded-full bg-slate-800 overflow-hidden">
                 <div

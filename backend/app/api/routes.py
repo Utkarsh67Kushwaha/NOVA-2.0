@@ -81,9 +81,55 @@ async def process_command(request: CommandRequest) -> Dict[str, Any]:
     latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
     prediction["latency_ms"] = latency_ms
 
+    intent = prediction.get("intent")
+    entities = prediction.get("entities", {})
+    live_response = None
+
+    if intent == "SYSTEM_INFO":
+        targets = entities.get("metric_targets", [])
+        if "battery" in targets:
+            bat = psutil.sensors_battery()
+            if bat:
+                plugged_str = "Plugged in (Charging)" if bat.power_plugged else "Running on Battery"
+                live_response = f"Aapke laptop ki battery {bat.percent}% hai ({plugged_str})."
+            else:
+                live_response = "Battery sensor data not available."
+        elif "ram" in targets:
+            mem = psutil.virtual_memory()
+            used_gb = round(mem.used / (1024**3), 2)
+            total_gb = round(mem.total / (1024**3), 2)
+            live_response = f"RAM Usage: {mem.percent}% ({used_gb} GB used out of {total_gb} GB)."
+        elif "cpu" in targets:
+            live_response = f"CPU Usage abhi {psutil.cpu_percent(interval=None)}% chal raha hai."
+        elif "disk" in targets or "storage" in targets:
+            disk = psutil.disk_usage(os.path.abspath(os.sep))
+            free_gb = round(disk.free / (1024**3), 2)
+            total_gb = round(disk.total / (1024**3), 2)
+            live_response = f"Drive C: me {free_gb} GB free storage bacha hai ({total_gb} GB me se)."
+        else:
+            live_response = f"System Overview: CPU {psutil.cpu_percent(interval=None)}%, RAM {psutil.virtual_memory().percent}%."
+
+    elif intent == "OPEN_APP":
+        app_name = entities.get("app_name", "application")
+        live_response = f"Intent identified: '{app_name}' open karne ki command hai (Phase 4 Tools me direct launch hoga)."
+
+    elif intent == "PLAY_MUSIC":
+        track = entities.get("track_or_query", "music")
+        live_response = f"Music command detected: '{track}' play karne ki request hai."
+
+    elif intent == "FILE_SEARCH":
+        file_target = entities.get("file_name", entities.get("file_query", "file"))
+        live_response = f"File search target: '{file_target}' dhoondne ki request hai."
+
+    elif intent == "REMINDER":
+        time_exp = entities.get("time_expression", "")
+        live_response = f"Reminder request: '{request.text}' (Time: {time_exp or 'specified time'})."
+
+    prediction["live_response"] = live_response
+
     logger.info(
         "Intent: %s (Confidence: %s%%, Latency: %sms)",
-        prediction.get("intent"),
+        intent,
         prediction.get("confidence_percent"),
         latency_ms,
     )
