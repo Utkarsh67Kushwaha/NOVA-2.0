@@ -4,6 +4,7 @@ export interface HealthData {
   version: string;
   environment: string;
   uptime_seconds: number;
+  ml_ready?: boolean;
 }
 
 export interface SystemStatusData {
@@ -29,7 +30,23 @@ export interface SystemStatusData {
     version: string;
     environment: string;
     port: number;
+    ml_model?: string;
   };
+}
+
+export interface CommandResult {
+  query: string;
+  intent: string;
+  raw_intent: string;
+  confidence: number;
+  confidence_percent: number;
+  threshold: number;
+  needs_clarification: boolean;
+  clarification_message?: string;
+  entities: Record<string, any>;
+  latency_ms: number;
+  model_name: string;
+  top_probabilities: Record<string, number>;
 }
 
 export interface NovaIPCBridge {

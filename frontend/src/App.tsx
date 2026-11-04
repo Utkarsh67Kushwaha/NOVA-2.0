@@ -12,8 +12,13 @@ import {
   Minimize2,
   CheckCircle2,
   Radio,
+  Send,
+  Sparkles,
+  HelpCircle,
+  Clock,
+  Layers,
 } from 'lucide-react';
-import { HealthData, SystemStatusData } from './types';
+import { HealthData, SystemStatusData, CommandResult } from './types';
 
 const BACKEND_URL = 'http://127.0.0.1:8000';
 
@@ -22,6 +27,17 @@ interface LogEntry {
   level: 'info' | 'warn' | 'error' | 'success';
   message: string;
 }
+
+const SAMPLE_COMMANDS = [
+  'spotify kholo please',
+  'play lofi beats for focus',
+  'downloads me resume.pdf dhoondo',
+  'battery kitne percent bachi hai',
+  'remind me to drink water at 5pm',
+  'summarize this uploaded pdf report',
+  'is python function me bug dhoond kar fix karo',
+  'quantum mechanics photon entanglement',
+];
 
 export default function App(): React.JSX.Element {
   const [health, setHealth] = useState<HealthData | null>(null);
@@ -32,6 +48,10 @@ export default function App(): React.JSX.Element {
   const [isElectron, setIsElectron] = useState<boolean>(false);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const [commandInput, setCommandInput] = useState<string>('');
+  const [isClassifying, setIsClassifying] = useState<boolean>(false);
+  const [commandResult, setCommandResult] = useState<CommandResult | null>(null);
+
   const logContainerRef = useRef<HTMLDivElement>(null);
 
   const addLog = useCallback((message: string, level: LogEntry['level'] = 'info') => {
@@ -74,7 +94,10 @@ export default function App(): React.JSX.Element {
 
         if (!isBackendConnected) {
           setIsBackendConnected(true);
-          addLog(`Connected to FastAPI backend: ${healthJson.app} (v${healthJson.version}) in ${roundTrip}ms`, 'success');
+          addLog(
+            `Connected to FastAPI backend: ${healthJson.app} (v${healthJson.version}) in ${roundTrip}ms`,
+            'success'
+          );
         }
       } else {
         throw new Error(`HTTP status: ${healthRes.status}/${statusRes.status}`);
@@ -143,6 +166,46 @@ export default function App(): React.JSX.Element {
     }
   };
 
+  const handleClassifyCommand = async (textToClassify?: string) => {
+    const text = (textToClassify ?? commandInput).trim();
+    if (!text) return;
+
+    setIsClassifying(true);
+    addLog(`Classifying command: "${text}"`, 'info');
+
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/command`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      });
+
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+      }
+
+      const result: CommandResult = await res.json();
+      setCommandResult(result);
+
+      if (result.needs_clarification) {
+        addLog(
+          `Command flagged UNKNOWN_INTENT (Confidence: ${result.confidence_percent}% < 65% threshold)`,
+          'warn'
+        );
+      } else {
+        addLog(
+          `Classified as ${result.intent} (${result.confidence_percent}% confidence in ${result.latency_ms}ms)`,
+          'success'
+        );
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      addLog(`Classification failed: ${msg}`, 'error');
+    } finally {
+      setIsClassifying(false);
+    }
+  };
+
   return (
     <div className="flex flex-col h-screen w-screen bg-nova-dark text-slate-100 overflow-hidden select-none">
       {/* Top Navigation Bar */}
@@ -153,9 +216,12 @@ export default function App(): React.JSX.Element {
           </div>
           <div>
             <h1 className="text-base font-bold tracking-wider uppercase text-white flex items-center gap-2">
-              NOVA <span className="text-xs px-2 py-0.5 rounded bg-nova-cyan/10 text-nova-cyan border border-nova-cyan/30">Phase 1</span>
+              NOVA{' '}
+              <span className="text-xs px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                Phase 2: ML Brain
+              </span>
             </h1>
-            <p className="text-[11px] text-slate-400">Desktop Foundation & Lifecycle Shell</p>
+            <p className="text-[11px] text-slate-400">Desktop AI Assistant • Local ML Intent Classifier</p>
           </div>
         </div>
 
@@ -221,7 +287,7 @@ export default function App(): React.JSX.Element {
                 {health?.status === 'healthy' ? 'Healthy' : 'Disconnected'}
               </div>
               <div className="text-xs text-slate-400 mb-4">
-                Endpoint: <span className="text-slate-200 font-mono">{BACKEND_URL}/health</span>
+                ML Model: <span className="text-emerald-400 font-mono font-medium">{systemStatus?.app.ml_model ?? 'Multinomial Naive Bayes'}</span>
               </div>
 
               <div className="space-y-2 border-t border-nova-border/60 pt-3 text-xs">
@@ -235,9 +301,7 @@ export default function App(): React.JSX.Element {
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-400">Uptime:</span>
-                  <span className="font-mono text-slate-200">
-                    {health ? `${health.uptime_seconds}s` : '0s'}
-                  </span>
+                  <span className="font-mono text-slate-200">{health ? `${health.uptime_seconds}s` : '0s'}</span>
                 </div>
               </div>
             </div>
@@ -308,9 +372,7 @@ export default function App(): React.JSX.Element {
               <div className="text-2xl font-bold tracking-tight text-white mb-1">
                 {isElectron ? 'Electron Active' : 'Browser Mode'}
               </div>
-              <div className="text-xs text-slate-400 mb-4">
-                Single Instance & Tray Enabled
-              </div>
+              <div className="text-xs text-slate-400 mb-4">Single Instance & Tray Resident</div>
 
               <div className="space-y-3 border-t border-nova-border/60 pt-3 text-xs">
                 <div className="flex items-center justify-between">
@@ -350,8 +412,125 @@ export default function App(): React.JSX.Element {
           </div>
         </div>
 
+        {/* Phase 2: Live ML Intent Classifier Testing Module */}
+        <div className="rounded-xl bg-nova-panel border border-nova-border shadow-lg p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-nova-cyan" />
+              <h2 className="text-sm font-bold uppercase tracking-wider text-white">
+                Live Intent Classification Engine (English & Hinglish)
+              </h2>
+            </div>
+            <span className="text-[11px] px-2.5 py-0.5 rounded-full bg-nova-cyan/10 text-nova-cyan border border-nova-cyan/30">
+              Trained Model: {systemStatus?.app.ml_model ?? 'MultinomialNB'}
+            </span>
+          </div>
+
+          {/* Command Input Box */}
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={commandInput}
+              onChange={(e) => setCommandInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleClassifyCommand()}
+              placeholder="Type any desktop command in English or Hinglish (e.g. 'spotify kholo', 'find resume.pdf in downloads', 'ram kitna bacha hai')..."
+              className="flex-1 px-4 py-2.5 rounded-lg bg-nova-dark border border-nova-border focus:border-nova-cyan focus:outline-none text-sm text-white placeholder-slate-500 font-mono"
+            />
+            <button
+              onClick={() => handleClassifyCommand()}
+              disabled={isClassifying || !commandInput.trim()}
+              className="px-5 py-2.5 rounded-lg bg-nova-cyan hover:bg-cyan-400 text-slate-950 font-semibold text-sm flex items-center gap-2 disabled:opacity-50 transition"
+            >
+              <Send className="w-4 h-4" />
+              {isClassifying ? 'Classifying...' : 'Classify'}
+            </button>
+          </div>
+
+          {/* Sample Command Chips */}
+          <div className="space-y-1.5">
+            <span className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider">
+              Quick Test Prompts:
+            </span>
+            <div className="flex flex-wrap gap-2">
+              {SAMPLE_COMMANDS.map((sample, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => {
+                    setCommandInput(sample);
+                    handleClassifyCommand(sample);
+                  }}
+                  className="text-xs px-2.5 py-1 rounded-md bg-nova-card hover:bg-slate-700 text-slate-300 border border-nova-border/80 transition font-mono"
+                >
+                  {sample}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Classification Results Card */}
+          {commandResult && (
+            <div className="p-4 rounded-lg bg-nova-dark/80 border border-nova-border space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <span
+                    className={`text-xs px-3 py-1 rounded-full font-bold uppercase tracking-wider ${
+                      commandResult.needs_clarification
+                        ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                        : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                    }`}
+                  >
+                    {commandResult.intent}
+                  </span>
+                  <span className="text-xs text-slate-400">
+                    Confidence:{' '}
+                    <strong className="text-white font-mono">{commandResult.confidence_percent}%</strong>
+                  </span>
+                  <span className="text-xs text-slate-400 flex items-center gap-1">
+                    <Clock className="w-3.5 h-3.5 text-nova-cyan" />
+                    Latency: <strong className="text-nova-cyan font-mono">{commandResult.latency_ms}ms</strong>
+                  </span>
+                </div>
+
+                {commandResult.entities && Object.keys(commandResult.entities).length > 0 && (
+                  <div className="flex items-center gap-1.5 text-xs">
+                    <Layers className="w-3.5 h-3.5 text-purple-400" />
+                    <span className="text-slate-400">Entities:</span>
+                    {Object.entries(commandResult.entities).map(([k, v]) => (
+                      <span key={k} className="px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 font-mono text-[11px]">
+                        {k}: {String(v)}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Confidence Progress Bar */}
+              <div className="w-full h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                <div
+                  className={`h-full transition-all duration-500 ${
+                    commandResult.needs_clarification
+                      ? 'bg-amber-400'
+                      : 'bg-gradient-to-r from-emerald-500 to-teal-400'
+                  }`}
+                  style={{ width: `${commandResult.confidence_percent}%` }}
+                />
+              </div>
+
+              {/* Clarification Box if Low Confidence */}
+              {commandResult.needs_clarification && (
+                <div className="p-3 rounded bg-amber-500/10 border border-amber-500/30 flex items-start gap-2.5 text-xs text-amber-300">
+                  <HelpCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <div>
+                    <strong>Low Confidence Safety Threshold Active:</strong> {commandResult.clarification_message}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
         {/* Diagnostics & Logs Terminal */}
-        <div className="rounded-xl bg-nova-panel border border-nova-border shadow-lg overflow-hidden flex flex-col h-64">
+        <div className="rounded-xl bg-nova-panel border border-nova-border shadow-lg overflow-hidden flex flex-col h-56">
           <div className="flex items-center justify-between px-4 py-2.5 bg-nova-card/60 border-b border-nova-border">
             <div className="flex items-center space-x-2 text-xs font-semibold text-slate-300">
               <Terminal className="w-4 h-4 text-nova-cyan" />
@@ -374,12 +553,17 @@ export default function App(): React.JSX.Element {
                 return (
                   <div key={index} className="flex items-start space-x-2 leading-relaxed">
                     <span className="text-slate-500 shrink-0">[{log.timestamp}]</span>
-                    <span className={`shrink-0 uppercase text-[10px] px-1 py-0.2 rounded font-semibold ${
-                      log.level === 'error' ? 'bg-rose-500/20 text-rose-300' :
-                      log.level === 'warn' ? 'bg-amber-500/20 text-amber-300' :
-                      log.level === 'success' ? 'bg-emerald-500/20 text-emerald-300' :
-                      'bg-slate-700/50 text-slate-400'
-                    }`}>
+                    <span
+                      className={`shrink-0 uppercase text-[10px] px-1 py-0.2 rounded font-semibold ${
+                        log.level === 'error'
+                          ? 'bg-rose-500/20 text-rose-300'
+                          : log.level === 'warn'
+                          ? 'bg-amber-500/20 text-amber-300'
+                          : log.level === 'success'
+                          ? 'bg-emerald-500/20 text-emerald-300'
+                          : 'bg-slate-700/50 text-slate-400'
+                      }`}
+                    >
                       {log.level}
                     </span>
                     <span className={colorMap[log.level]}>{log.message}</span>
@@ -393,7 +577,7 @@ export default function App(): React.JSX.Element {
 
       {/* Footer */}
       <footer className="px-6 py-2 bg-nova-panel border-t border-nova-border/70 flex items-center justify-between text-[11px] text-slate-400">
-        <div>NOVA • Gemini Build Specification • Milestone 1 (Foundation)</div>
+        <div>NOVA • Gemini Build Specification • Phase 2 (ML Brain Verified)</div>
         <div className="flex items-center space-x-4">
           <span>Backend: <code className="text-slate-300">127.0.0.1:8000</code></span>
           <span>Frontend: <code className="text-slate-300">127.0.0.1:5173</code></span>
