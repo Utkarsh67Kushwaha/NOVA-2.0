@@ -119,3 +119,32 @@ def test_hands_free_endpoints(client):
     res_stop = client.post("/api/voice/hands-free/stop")
     assert res_stop.status_code == 200
     assert res_stop.json()["hands_free_active"] is False
+
+
+
+def test_media_controller_operations():
+    """Verify hardware media key and audio inspection routines."""
+    from backend.app.voice.media_controller import media_controller
+
+    # Test state management
+    media_controller._paused_for_voice = True
+    assert media_controller.is_paused_for_voice is True
+    media_controller.clear_paused_state()
+    assert media_controller.is_paused_for_voice is False
+
+    # Test key emission returns boolean
+    assert isinstance(media_controller.toggle_playback(), bool)
+    assert isinstance(media_controller.pause(), bool)
+    assert isinstance(media_controller.resume(), bool)
+
+
+def test_media_control_safe_tool(client):
+    """Verify media_control tool can be executed through API."""
+    response = client.post(
+        "/api/tools/execute",
+        json={"tool_name": "media_control", "args": {"action": "pause"}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["result"]["success"] is True
+    assert "paused" in data["result"]["output"].lower()

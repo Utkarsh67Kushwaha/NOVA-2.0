@@ -10,6 +10,7 @@ import numpy as np
 from backend.app.services.intent_service import intent_service
 from backend.app.tools import default_registry
 from backend.app.voice.audio_capture import audio_capture
+from backend.app.voice.media_controller import media_controller
 from backend.app.voice.stt import stt_service
 from backend.app.voice.tts import tts_service
 from backend.app.voice.vad import VoiceActivityDetector
@@ -72,6 +73,7 @@ class VoiceAssistantManager:
             "volume_level": audio_capture.current_rms,
             "hands_free_active": self.is_hands_free,
             "last_event": self.last_event,
+            "media_paused_for_voice": media_controller.is_paused_for_voice,
         }
 
     def interrupt(self) -> None:
@@ -79,6 +81,7 @@ class VoiceAssistantManager:
         tts_service.stop()
         self.vad.reset()
         self.followup_active_until = 0.0
+        media_controller.clear_paused_state()
         self._flush_audio_queue()
         self.state = VoiceState.IDLE
         logger.info("Voice Assistant interrupted.")
@@ -90,6 +93,7 @@ class VoiceAssistantManager:
         if muted:
             tts_service.stop()
             self.followup_active_until = 0.0
+            media_controller.clear_paused_state()
             self._flush_audio_queue()
         return muted
 
@@ -108,11 +112,38 @@ class VoiceAssistantManager:
 
         try:
             if intent == "PLAY_MUSIC":
-                track = entities.get("track_or_query", "music")
-                t_res = default_registry.execute("play_music", {"track": track})
-                prediction["executed_tool"] = "play_music"
-                prediction["tool_result"] = t_res.model_dump()
-                return f"Opening {track} in Google Chrome."
+                action = entities.get("action", "play")
+                if action in ("pause", "stop"):
+                    t_res = default_registry.execute("media_control", {"action": "pause"})
+                    prediction["executed_tool"] = "media_control"
+                    prediction["tool_result"] = t_res.model_dump()
+                    media_controller.clear_paused_state()
+                    return "Media playback paused."
+                elif action in ("resume", "continue"):
+                    t_res = default_registry.execute("media_control", {"action": "resume"})
+                    prediction["executed_tool"] = "media_control"
+                    prediction["tool_result"] = t_res.model_dump()
+                    media_controller.clear_paused_state()
+                    return "Media playback resumed."
+                elif action == "next":
+                    t_res = default_registry.execute("media_control", {"action": "next"})
+                    prediction["executed_tool"] = "media_control"
+                    prediction["tool_result"] = t_res.model_dump()
+                    media_controller.clear_paused_state()
+                    return "Skipped to next track."
+                elif action == "previous":
+                    t_res = default_registry.execute("media_control", {"action": "previous"})
+                    prediction["executed_tool"] = "media_control"
+                    prediction["tool_result"] = t_res.model_dump()
+                    media_controller.clear_paused_state()
+                    return "Returned to previous track."
+                else:
+                    track = entities.get("track_or_query", "music")
+                    t_res = default_registry.execute("play_music", {"track": track})
+                    prediction["executed_tool"] = "play_music"
+                    prediction["tool_result"] = t_res.model_dump()
+                    media_controller.clear_paused_state()
+                    return f"Opening {track} in Google Chrome."
 
             elif intent == "OPEN_APP":
                 app_name = entities.get("app_name")
@@ -200,6 +231,7 @@ class VoiceAssistantManager:
             self.is_hands_free = False
             self._stop_event.set()
             self.followup_active_until = 0.0
+            media_controller.clear_paused_state()
             self._flush_audio_queue()
             logger.info("Hands-free 'Hey NOVA' wake-word engine STOPPED.")
             return False
@@ -218,6 +250,13 @@ class VoiceAssistantManager:
             if audio_capture.is_muted or not audio_capture.is_running:
                 time.sleep(0.2)
                 continue
+
+            # Auto-resume paused media if followup window timed out without speech
+            if self.followup_active_until > 0 and time.time() >= self.followup_active_until:
+                self.followup_active_until = 0.0
+                if media_controller.is_paused_for_voice:
+                    logger.info("Followup window timed out without speech. Resuming paused media.")
+                    media_controller.resume_if_paused_by_voice()
 
             try:
                 # Retrieve next audio chunk
@@ -257,8 +296,13 @@ class VoiceAssistantManager:
                     self.state = VoiceState.IDLE
                     continue
 
-                # Play pleasant audio chime immediately on wake word confirmation
+                # When 'Hey NOVA' is spoken: immediately interrupt TTS, pause external media, and play chime
                 if is_wake:
+                    tts_service.stop()
+                    paused = media_controller.pause_if_playing()
+                    if paused:
+                        logger.info("Active media paused upon detecting 'Hey NOVA'.")
+                    self._flush_audio_queue()
                     play_wake_chime()
 
                 command_to_run = clean_command if is_wake else transcript
@@ -270,6 +314,7 @@ class VoiceAssistantManager:
                     "clean_command": command_to_run,
                     "wake_word_detected": is_wake,
                     "status": "success",
+                    "media_paused": media_controller.is_paused_for_voice,
                 }
 
                 if not command_to_run:
@@ -298,6 +343,26 @@ class VoiceAssistantManager:
                     self.state = VoiceState.SPEAKING
                     tts_service.speak(response_text, blocking=False)
 
+                    # Auto-resume media logic:
+                    # If this was not a new song request or explicit stop/pause, resume whatever was playing
+                    action = (
+                        prediction.get("entities", {}).get("action")
+                        if prediction.get("intent") == "PLAY_MUSIC"
+                        else None
+                    )
+                    if prediction.get("intent") != "PLAY_MUSIC":
+                        def _resume_after_speaking():
+                            t = 0.0
+                            while tts_service.is_speaking and t < 4.5:
+                                time.sleep(0.1)
+                                t += 0.1
+                            time.sleep(0.3)
+                            media_controller.resume_if_paused_by_voice()
+
+                        threading.Thread(target=_resume_after_speaking, daemon=True).start()
+                    elif action in ("pause", "stop", "play", "resume", "continue"):
+                        media_controller.clear_paused_state()
+
                 self.last_event = event_data
                 self.event_history.append(event_data)
                 if len(self.event_history) > 50:
@@ -320,7 +385,9 @@ class VoiceAssistantManager:
             if not audio_capture.is_running:
                 audio_capture.start()
 
-            # Flush any stale chunks in queue
+            # Pause media if playing so background sound does not interfere
+            tts_service.stop()
+            media_controller.pause_if_playing()
             self._flush_audio_queue()
 
             collected_audio = []
@@ -346,6 +413,7 @@ class VoiceAssistantManager:
 
                 if not collected_audio:
                     self.state = VoiceState.IDLE
+                    media_controller.resume_if_paused_by_voice()
                     return {
                         "error": "Microphone se audio capture nahi ho saka.",
                         "status": "failed",
@@ -359,6 +427,7 @@ class VoiceAssistantManager:
 
                 if not transcript or not transcript.strip():
                     self.state = VoiceState.IDLE
+                    media_controller.resume_if_paused_by_voice()
                     return {
                         "transcript": "",
                         "status": "no_speech",
@@ -391,6 +460,25 @@ class VoiceAssistantManager:
                 tts_service.speak(response_text, blocking=False)
                 self.state = VoiceState.IDLE
 
+                # Auto-resume media if non-music command
+                action = (
+                    prediction.get("entities", {}).get("action")
+                    if prediction.get("intent") == "PLAY_MUSIC"
+                    else None
+                )
+                if prediction.get("intent") != "PLAY_MUSIC":
+                    def _resume_after_speaking_once():
+                        t = 0.0
+                        while tts_service.is_speaking and t < 4.5:
+                            time.sleep(0.1)
+                            t += 0.1
+                        time.sleep(0.3)
+                        media_controller.resume_if_paused_by_voice()
+
+                    threading.Thread(target=_resume_after_speaking_once, daemon=True).start()
+                elif action in ("pause", "stop", "play", "resume", "continue"):
+                    media_controller.clear_paused_state()
+
                 result_data = {
                     "transcript": transcript,
                     "clean_command": command_to_classify,
@@ -398,6 +486,7 @@ class VoiceAssistantManager:
                     "prediction": prediction,
                     "spoken_response": response_text,
                     "status": "success",
+                    "media_paused": media_controller.is_paused_for_voice,
                 }
                 self.last_event = result_data
                 self._flush_audio_queue()

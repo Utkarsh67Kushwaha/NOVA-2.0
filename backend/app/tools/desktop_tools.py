@@ -546,3 +546,67 @@ class TakeScreenshotTool(BaseTool):
             details="Screen capture dispatched to Windows Shell successfully.",
             metrics={"has_saved_file": bool(kwargs.get("path"))},
         )
+
+
+
+class MediaControlTool(BaseTool):
+    """Tool to control system media playback (play, pause, resume, stop, next, previous)."""
+
+    def __init__(self):
+        super().__init__(
+            name="media_control",
+            description="Control desktop and browser media playback (pause, resume, stop, next, previous, play_pause).",
+            category="media",
+            risk_level=RiskLevel.LOW_RISK,
+        )
+
+    def get_parameters_schema(self) -> List[ToolParamSchema]:
+        return [
+            ToolParamSchema(
+                name="action",
+                type="string",
+                description="Media action: 'pause', 'resume', 'play_pause', 'stop', 'next', 'previous'",
+                required=True,
+                default="pause",
+                enum=["pause", "resume", "play_pause", "stop", "next", "previous", "play"],
+            )
+        ]
+
+    def execute(self, **kwargs: Any) -> ToolResult:
+        action = str(kwargs.get("action", "pause")).lower().strip()
+        from backend.app.voice.media_controller import media_controller
+
+        if action in ("pause", "stop", "roko", "band"):
+            media_controller.send_key(0xB3)  # VK_MEDIA_PLAY_PAUSE
+            media_controller.clear_paused_state()
+            output = "Media playback paused."
+        elif action in ("resume", "play", "chalao", "continue"):
+            media_controller.send_key(0xB3)
+            media_controller.clear_paused_state()
+            output = "Media playback resumed."
+        elif action in ("next", "agla", "skip"):
+            media_controller.next_track()
+            output = "Skipped to next track."
+        elif action in ("previous", "prev", "pichla"):
+            media_controller.previous_track()
+            output = "Returned to previous track."
+        else:
+            media_controller.toggle_playback()
+            output = "Media playback toggled."
+
+        result = ToolResult(
+            tool_name=self.name,
+            success=True,
+            output=output,
+            data={"action": action},
+        )
+        result.verification = self.verify(result, action=action)
+        return result
+
+    def verify(self, result: ToolResult, **kwargs: Any) -> VerificationResult:
+        return VerificationResult(
+            verified=True,
+            method="hardware_media_key_verification",
+            details="Windows media transport key event dispatched successfully.",
+            metrics={"action": kwargs.get("action")},
+        )

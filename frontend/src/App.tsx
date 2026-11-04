@@ -192,6 +192,9 @@ export default function App(): React.JSX.Element {
             if (vData.last_event.transcript) {
               addLog(`🎙️ Wake Word Activated: "${vData.last_event.transcript}"`, 'success');
             }
+            if ((vData.last_event as any).media_paused) {
+              addLog('⏸️ Active media paused to hear your command clearly.', 'info');
+            }
             if (vData.last_event.prediction) {
               setCommandResult(vData.last_event.prediction);
               addLog(
@@ -769,6 +772,14 @@ export default function App(): React.JSX.Element {
                 className="px-3 py-1.5 rounded-lg bg-nova-card hover:bg-slate-700 text-xs font-semibold text-slate-200 border border-nova-border flex items-center gap-1.5 transition"
               >
                 🔋 Read Battery
+              </button>
+
+              <button
+                onClick={() => handleExecuteTool('media_control', { action: 'play_pause' })}
+                disabled={isExecutingTool}
+                className="px-3 py-1.5 rounded-lg bg-nova-card hover:bg-slate-700 text-xs font-semibold text-slate-200 border border-nova-border flex items-center gap-1.5 transition"
+              >
+                ⏯️ Media Play/Pause
               </button>
 
               <button

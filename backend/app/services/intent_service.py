@@ -104,6 +104,41 @@ class IntentClassifierService:
                     break
 
         elif intent == "PLAY_MUSIC":
+            clean_lower = clean.lower().strip()
+            # Media control actions
+            pause_keywords = [
+                "pause", "stop", "pause the song", "pause music", "stop music",
+                "gana roko", "gana band karo", "music band karo", "ruk jao", "chup ho jao",
+                "pause kar do", "pause karo", "stop the song"
+            ]
+            resume_keywords = [
+                "resume", "play", "continue", "resume the song", "resume song", "resume music",
+                "gana chalao", "wapas bajao", "fir se chalao", "aage chalao", "aage play karo"
+            ]
+            next_keywords = ["next song", "agla gana", "skip song", "next track", "skip"]
+            prev_keywords = ["previous song", "pichla gana", "prev song", "previous track"]
+
+            if clean_lower in pause_keywords:
+                entities["action"] = "pause"
+                entities["track_or_query"] = ""
+                return entities
+
+            if clean_lower in resume_keywords:
+                entities["action"] = "resume"
+                entities["track_or_query"] = ""
+                return entities
+
+            if any(k in clean_lower for k in next_keywords):
+                entities["action"] = "next"
+                entities["track_or_query"] = ""
+                return entities
+
+            if any(k in clean_lower for k in prev_keywords):
+                entities["action"] = "previous"
+                entities["track_or_query"] = ""
+                return entities
+
+            entities["action"] = "play"
             # Extract song or artist name
             # 1. Check: [song] (song) play karo/kare/bajao/chalao
             end_match = re.search(
@@ -181,6 +216,72 @@ class IntentClassifierService:
                 "confidence": 0.0,
                 "needs_clarification": True,
                 "clarification_message": "Command was empty. Please provide a command.",
+            }
+
+        # Rule priority for hardware media transport control commands
+        media_pause_patterns = {
+            "stop", "pause", "pause the song", "pause music", "stop music", "stop the song",
+            "gana roko", "gana band karo", "music band karo", "ruk jao", "chup ho jao",
+            "pause karo", "pause kar do"
+        }
+        media_resume_patterns = {
+            "play", "resume", "continue", "resume music", "resume song", "resume the song",
+            "gana chalao", "wapas bajao", "aage play karo", "fir se chalao"
+        }
+        media_next_patterns = {"next song", "agla gana", "skip song", "next track", "skip"}
+        media_prev_patterns = {"previous song", "pichla gana", "prev song", "previous track"}
+
+        if clean in media_pause_patterns:
+            return {
+                "query": text,
+                "intent": "PLAY_MUSIC",
+                "raw_intent": "PLAY_MUSIC",
+                "confidence": 0.98,
+                "confidence_percent": 98.0,
+                "threshold": self.confidence_threshold,
+                "needs_clarification": False,
+                "entities": {"action": "pause", "track_or_query": ""},
+                "model_name": "RulePriority-MediaControl",
+                "top_probabilities": {"PLAY_MUSIC": 0.98},
+            }
+        if clean in media_resume_patterns:
+            return {
+                "query": text,
+                "intent": "PLAY_MUSIC",
+                "raw_intent": "PLAY_MUSIC",
+                "confidence": 0.98,
+                "confidence_percent": 98.0,
+                "threshold": self.confidence_threshold,
+                "needs_clarification": False,
+                "entities": {"action": "resume", "track_or_query": ""},
+                "model_name": "RulePriority-MediaControl",
+                "top_probabilities": {"PLAY_MUSIC": 0.98},
+            }
+        if clean in media_next_patterns:
+            return {
+                "query": text,
+                "intent": "PLAY_MUSIC",
+                "raw_intent": "PLAY_MUSIC",
+                "confidence": 0.98,
+                "confidence_percent": 98.0,
+                "threshold": self.confidence_threshold,
+                "needs_clarification": False,
+                "entities": {"action": "next", "track_or_query": ""},
+                "model_name": "RulePriority-MediaControl",
+                "top_probabilities": {"PLAY_MUSIC": 0.98},
+            }
+        if clean in media_prev_patterns:
+            return {
+                "query": text,
+                "intent": "PLAY_MUSIC",
+                "raw_intent": "PLAY_MUSIC",
+                "confidence": 0.98,
+                "confidence_percent": 98.0,
+                "threshold": self.confidence_threshold,
+                "needs_clarification": False,
+                "entities": {"action": "previous", "track_or_query": ""},
+                "model_name": "RulePriority-MediaControl",
+                "top_probabilities": {"PLAY_MUSIC": 0.98},
             }
 
         vec = self.vectorizer.transform([clean])
