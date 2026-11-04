@@ -97,6 +97,22 @@ export default function App(): React.JSX.Element {
     setLogs((prev) => [...prev.slice(-99), { timestamp, level, message }]);
   }, []);
 
+  const openExternalUrl = useCallback(
+    (url: string) => {
+      if (!url) return;
+      addLog(`Redirecting to Google Chrome: ${url}`, 'info');
+      if (window.novaAPI?.openExternal) {
+        window.novaAPI.openExternal(url).catch((err) => {
+          console.warn('Electron openExternal error, falling back to window.open:', err);
+          window.open(url, '_blank');
+        });
+      } else {
+        window.open(url, '_blank');
+      }
+    },
+    [addLog]
+  );
+
   // Check Electron IPC presence
   useEffect(() => {
     if (window.novaAPI) {
@@ -291,6 +307,12 @@ export default function App(): React.JSX.Element {
               `ML Intent Identified: ${data.prediction.intent} (${data.prediction.confidence_percent}%)`,
               'info'
             );
+            const redirectUrl =
+              data.prediction.tool_result?.data?.url ||
+              data.prediction.tool_result?.data?.search_url;
+            if (redirectUrl) {
+              openExternalUrl(redirectUrl);
+            }
           }
           if (data.spoken_response) {
             addLog(`NOVA Spoke: "${data.spoken_response}"`, 'info');
@@ -386,6 +408,11 @@ export default function App(): React.JSX.Element {
           );
           if (result.executed_tool) {
             addLog(`Dispatched safe tool: '${result.executed_tool}'`, 'info');
+          }
+          const redirectUrl =
+            result.tool_result?.data?.url || result.tool_result?.data?.search_url;
+          if (redirectUrl) {
+            openExternalUrl(redirectUrl);
           }
         }
         fetchAuditLog();
@@ -950,6 +977,30 @@ export default function App(): React.JSX.Element {
                   </div>
                 </div>
               )}
+
+              {voiceResult.prediction?.tool_result?.data?.url && (
+                <div className="mt-2 p-3 rounded-lg bg-red-950/40 border border-red-500/40 flex items-center justify-between text-xs text-red-200">
+                  <div className="flex items-center gap-2">
+                    <span className="text-base">▶️</span>
+                    <div>
+                      <strong className="text-white">Google Chrome: </strong>
+                      <span>Playing &quot;{voiceResult.prediction.tool_result.data.track || 'Song'}&quot; in Google Chrome...</span>
+                    </div>
+                  </div>
+                  <a
+                    href={voiceResult.prediction.tool_result.data.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      openExternalUrl(voiceResult.prediction!.tool_result!.data!.url);
+                    }}
+                    className="px-3 py-1 rounded bg-red-600 hover:bg-red-500 text-white font-medium text-[11px] transition-colors"
+                  >
+                    ▶ Play in Chrome
+                  </a>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -1051,6 +1102,31 @@ export default function App(): React.JSX.Element {
                 <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-xs text-emerald-300 flex items-center gap-2">
                   <span className="font-bold text-white text-[11px] uppercase tracking-wider px-2 py-0.5 rounded bg-emerald-500/20">Answer</span>
                   <span className="font-medium text-emerald-200 text-sm">{commandResult.live_response}</span>
+                </div>
+              )}
+
+              {/* YouTube Media Redirect Banner */}
+              {commandResult.tool_result?.data?.url && (
+                <div className="p-3 rounded-lg bg-red-950/40 border border-red-500/40 flex items-center justify-between text-xs text-red-200">
+                  <div className="flex items-center gap-2">
+                    <span className="text-base">▶️</span>
+                    <div>
+                      <strong className="text-white">Google Chrome: </strong>
+                      <span>Playing &quot;{commandResult.tool_result.data.track || 'Song'}&quot; in Google Chrome...</span>
+                    </div>
+                  </div>
+                  <a
+                    href={commandResult.tool_result.data.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      openExternalUrl(commandResult.tool_result!.data!.url);
+                    }}
+                    className="px-3 py-1 rounded bg-red-600 hover:bg-red-500 text-white font-medium text-[11px] transition-colors"
+                  >
+                    ▶ Play in Chrome
+                  </a>
                 </div>
               )}
 

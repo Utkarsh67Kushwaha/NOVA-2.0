@@ -73,9 +73,23 @@ class IntentClassifierService:
         return self.model is not None and self.vectorizer is not None
 
     def normalize(self, text: str) -> str:
-        """Preprocesses input query."""
+        """Preprocesses input query and corrects common phonetic STT errors."""
         text = text.lower().strip()
+        text = re.sub(r"[.!?,\"]+$", "", text).strip()
         text = re.sub(r"\s+", " ", text)
+
+        # Phonetic corrections for common Faster-Whisper mishearings on Indian/Hinglish phrases
+        whisper_phonetic_fixes = [
+            (r"\b(?:lay|let|play)\s+it\s+serious\s+on\b", "play kesariya song"),
+            (r"\b(?:lay|play)\s+it\s+serious\b", "play kesariya"),
+            (r"\b(?:it\s+)?serious\s+on\b", "kesariya song"),
+            (r"\bserious\s+song\b", "kesariya song"),
+            (r"\b(?:cash\s*area|kiss\s*area)\b", "kesariya"),
+            (r"\b(?:but\s+leave\s*,?\s*but\s+leave|but\s+leave)\b", "bollywood"),
+        ]
+        for pattern, replacement in whisper_phonetic_fixes:
+            text = re.sub(pattern, replacement, text)
+
         return text
 
     def extract_entities(self, text: str, intent: str) -> Dict[str, Any]:
@@ -91,14 +105,26 @@ class IntentClassifierService:
 
         elif intent == "PLAY_MUSIC":
             # Extract song or artist name
-            music_match = re.search(
-                r"(?:play|bajao|chalao|lagao|sunao)\s+(?:some\s+)?(?:music\s+)?(?:on\s+spotify\s+)?(.+)",
+            # 1. Check: [song] (song) play karo/kare/bajao/chalao
+            end_match = re.search(
+                r"^(.*?)\s*(?:ko\s+)?(?:song\s+)?(?:play\s+karo|play\s+kare|bajao|chalao|lagao|sunao|play)\s*(?:karo|kare)?$",
                 clean,
             )
-            if music_match:
-                entities["track_or_query"] = music_match.group(1).strip()
+            raw_track = clean
+            if end_match and end_match.group(1).strip():
+                raw_track = end_match.group(1).strip()
             else:
-                entities["track_or_query"] = clean
+                # 2. Check: play/bajao [song]
+                start_match = re.search(
+                    r"^(?:play|bajao|chalao|lagao|sunao)\s+(?:some\s+)?(?:music\s+)?(?:on\s+spotify\s+)?(.+?)(?:\s+(?:karo|kare))?$",
+                    clean,
+                )
+                if start_match and start_match.group(1).strip():
+                    raw_track = start_match.group(1).strip()
+
+            raw_track = re.sub(r"^[,\s.!?\"'\-:]+|[,\s.!?\"'\-:]+$", "", raw_track).strip()
+            raw_track = re.sub(r"^(?:song|gana|gaana)[,\s]+", "", raw_track, flags=re.IGNORECASE).strip()
+            entities["track_or_query"] = raw_track
 
         elif intent == "FILE_SEARCH":
             # Extract target file or extension

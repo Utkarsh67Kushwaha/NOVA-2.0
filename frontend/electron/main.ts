@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, globalShortcut } from 'electron';
+import { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, globalShortcut, shell } from 'electron';
 import * as path from 'path';
 
 let mainWindow: BrowserWindow | null = null;
@@ -104,6 +104,26 @@ function createWindow(): void {
     }
   });
 
+  // Open external links in user's default browser (Google Chrome) instead of new Electron windows
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('http:') || url.startsWith('https:')) {
+      shell.openExternal(url);
+    }
+    return { action: 'deny' };
+  });
+
+  // Prevent in-app navigation away from NOVA to external websites
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (
+      !url.startsWith('http://localhost') &&
+      !url.startsWith('http://127.0.0.1') &&
+      !url.startsWith('file:')
+    ) {
+      event.preventDefault();
+      shell.openExternal(url);
+    }
+  });
+
   const distHtmlPath = path.join(__dirname, '../dist/index.html');
 
   // Try loading local Vite dev server first, otherwise fall back to compiled dist
@@ -120,6 +140,19 @@ function createWindow(): void {
 // IPC Handlers
 ipcMain.handle('nova:ping', async () => {
   return 'pong';
+});
+
+ipcMain.handle('nova:open-external', async (_event, url: string) => {
+  try {
+    if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
+      await shell.openExternal(url);
+      return true;
+    }
+    return false;
+  } catch (err) {
+    console.error('Failed to open external URL in browser:', err);
+    return false;
+  }
 });
 
 ipcMain.handle('nova:get-login-startup', async () => {

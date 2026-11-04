@@ -7,5 +7,6 @@ contextBridge.exposeInMainWorld('novaAPI', {
   setLoginItemSettings: (enabled: boolean) => ipcRenderer.invoke('nova:set-login-startup', enabled),
   minimizeToTray: () => ipcRenderer.send('nova:minimize-to-tray'),
   quitApp: () => ipcRenderer.send('nova:quit-app'),
+  openExternal: (url: string) => ipcRenderer.invoke('nova:open-external', url),
   platform: process.platform,
 });

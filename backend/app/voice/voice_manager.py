@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional
 import numpy as np
 
 from backend.app.services.intent_service import intent_service
+from backend.app.tools import default_registry
 from backend.app.voice.audio_capture import audio_capture
 from backend.app.voice.stt import stt_service
 from backend.app.voice.tts import tts_service
@@ -26,7 +27,7 @@ class VoiceState(str, Enum):
 
 
 class VoiceAssistantManager:
-    """Orchestrates audio capture, VAD, wake phrase detection, STT, intent classification, and TTS."""
+    """Orchestrates audio capture, VAD, wake phrase detection, STT, intent classification, action execution, and TTS."""
 
     def __init__(self):
         self.state: VoiceState = VoiceState.IDLE
@@ -60,8 +61,79 @@ class VoiceAssistantManager:
             tts_service.stop()
         return muted
 
+    def _execute_voice_action(self, prediction: Dict[str, Any], command: str) -> str:
+        """Dispatches recognized intent to Safe Tools registry and returns spoken response."""
+        intent = prediction.get("intent")
+        entities = prediction.get("entities", {})
+
+        try:
+            if intent == "PLAY_MUSIC":
+                track = entities.get("track_or_query", "music")
+                t_res = default_registry.execute("play_music", {"track": track})
+                prediction["executed_tool"] = "play_music"
+                prediction["tool_result"] = t_res.model_dump()
+                return f"Opening {track} in Google Chrome."
+
+            elif intent == "OPEN_APP":
+                app_name = entities.get("app_name")
+                if app_name in ("sc", "screenshot", "snippingtool"):
+                    t_res = default_registry.execute("take_screenshot", {})
+                    prediction["executed_tool"] = "take_screenshot"
+                    prediction["tool_result"] = t_res.model_dump()
+                    return "Screenshot captured successfully."
+                elif app_name:
+                    t_res = default_registry.execute("launch_app", {"app_name": app_name})
+                    prediction["executed_tool"] = "launch_app"
+                    prediction["tool_result"] = t_res.model_dump()
+                    return t_res.output
+                return "Application name samajh nahi aaya."
+
+            elif intent == "BROWSER_ACTION":
+                search_query = entities.get("search_query", command)
+                t_res = default_registry.execute("web_search", {"query": search_query})
+                prediction["executed_tool"] = "web_search"
+                prediction["tool_result"] = t_res.model_dump()
+                return f"Searching for {search_query}."
+
+            elif intent == "SYSTEM_INFO":
+                targets = entities.get("metric_targets", [])
+                filter_name = "all"
+                if "battery" in targets:
+                    filter_name = "battery"
+                elif "ram" in targets or "memory" in targets:
+                    filter_name = "memory"
+                elif "cpu" in targets:
+                    filter_name = "cpu"
+                elif "disk" in targets or "storage" in targets:
+                    filter_name = "disk"
+                t_res = default_registry.execute("system_status", {"metric_filter": filter_name})
+                prediction["executed_tool"] = "system_status"
+                prediction["tool_result"] = t_res.model_dump()
+                return t_res.output
+
+            elif intent == "FILE_SEARCH":
+                target = entities.get("file_name", entities.get("file_query", ""))
+                if target:
+                    t_res = default_registry.execute("search_files", {"query": target})
+                    prediction["executed_tool"] = "search_files"
+                    prediction["tool_result"] = t_res.model_dump()
+                    return t_res.output
+                return "File search ke liye naam specify karein."
+
+            elif intent == "REMINDER":
+                time_exp = entities.get("time_expression", "")
+                return f"Reminder note kiya: {command} ({time_exp or 'samay specify nahi kiya'})."
+
+            else:
+                intent_name = prediction.get("intent")
+                return f"Command samajh gaya: {intent_name}."
+
+        except Exception as ex:
+            logger.error("Error executing voice action for intent '%s': %s", intent, ex)
+            return f"{intent} command process karte waqt issue aaya."
+
     def record_and_process_once(self, max_duration_sec: float = 6.0) -> Dict[str, Any]:
-        """Records a single voice command from mic, transcribes, classifies, speaks result, and returns data."""
+        """Records a single voice command from mic, transcribes, classifies, executes, speaks result, and returns data."""
         with self._lock:
             self.state = VoiceState.LISTENING
             logger.info("Listening for voice command (Max duration: %.1fs)...", max_duration_sec)
@@ -126,7 +198,7 @@ class VoiceAssistantManager:
                 prediction = intent_service.predict(command_to_classify)
                 self.last_response = prediction
 
-                # Step 4: Text-to-Speech Response
+                # Step 4: Tool Execution & Text-to-Speech Response
                 response_text = ""
                 if prediction.get("needs_clarification"):
                     response_text = prediction.get(
@@ -134,12 +206,8 @@ class VoiceAssistantManager:
                         "Mujhe theek se samajh nahi aaya, kripya dobara bolein.",
                     )
                 else:
-                    live_resp = prediction.get("live_response")
-                    if live_resp:
-                        response_text = live_resp
-                    else:
-                        intent_name = prediction.get("intent")
-                        response_text = f"Theek hai, {intent_name} command samajh gaya."
+                    response_text = self._execute_voice_action(prediction, command_to_classify)
+                    prediction["live_response"] = response_text
 
                 self.state = VoiceState.SPEAKING
                 tts_service.speak(response_text, blocking=False)

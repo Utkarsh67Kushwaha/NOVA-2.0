@@ -163,10 +163,10 @@ async def process_command(request: CommandRequest) -> Dict[str, Any]:
 
     elif intent == "PLAY_MUSIC":
         track = entities.get("track_or_query", "music")
-        t_res = default_registry.execute("web_search", {"query": f"play {track}"})
-        executed_tool = "web_search"
+        t_res = default_registry.execute("play_music", {"track": track})
+        executed_tool = "play_music"
         tool_result = t_res.model_dump()
-        live_response = f"Playing music: '{track}'. Dispatched via safe web search."
+        live_response = f"Opening '{track}' in Google Chrome."
 
     elif intent == "REMINDER":
         time_exp = entities.get("time_expression", "")

@@ -126,6 +126,7 @@ export interface NovaIPCBridge {
   setLoginItemSettings: (enabled: boolean) => Promise<boolean>;
   minimizeToTray: () => void;
   quitApp: () => void;
+  openExternal: (url: string) => Promise<boolean>;
   platform: string;
 }
 

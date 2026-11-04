@@ -7,6 +7,13 @@ from faster_whisper import WhisperModel
 
 logger = logging.getLogger("nova.voice.stt")
 
+# Context prompt to bias Whisper toward recognizing bilingual Indian/Hinglish commands & popular music titles
+DEFAULT_INITIAL_PROMPT = (
+    "NOVA AI desktop assistant. Voice commands in English and Hindi/Hinglish: "
+    "play song, gaana bajao, chalao, kesariya, arijit singh, music, spotify, youtube, "
+    "open chrome, vscode, search, reminder, system info, volume, shutdown."
+)
+
 
 class SpeechToTextService:
     """Local, quantized speech-to-text service using Faster-Whisper."""
@@ -38,19 +45,28 @@ class SpeechToTextService:
             logger.info("Loaded Faster-Whisper model in %.2fs", time.perf_counter() - start_load)
         return self._model
 
-    def transcribe(self, audio_data: np.ndarray, language: Optional[str] = None) -> str:
+    def transcribe(
+        self,
+        audio_data: np.ndarray,
+        language: Optional[str] = None,
+        initial_prompt: Optional[str] = None,
+    ) -> str:
         """Transcribes 16kHz float32 audio numpy array to text."""
         if len(audio_data) == 0:
             return ""
 
         model = self._get_model()
         start_time = time.perf_counter()
+        prompt = initial_prompt or DEFAULT_INITIAL_PROMPT
+
+        target_language = language or "en"
 
         # faster-whisper accepts float32 numpy array normalized between -1.0 and 1.0
         segments, info = model.transcribe(
             audio_data,
-            beam_size=3,
-            language=language,
+            beam_size=5,
+            language=target_language,
+            initial_prompt=prompt,
             vad_filter=False,  # We already perform VAD before feeding
             temperature=0.0,
         )

@@ -15,7 +15,7 @@ from backend.app.tools.desktop_tools import (
     ManageWindowTool,
     TakeScreenshotTool,
 )
-from backend.app.tools.browser_tools import OpenUrlTool, WebSearchTool
+from backend.app.tools.browser_tools import OpenUrlTool, WebSearchTool, PlayMusicTool
 from backend.app.tools.file_tools import (
     ListFilesTool,
     SearchFilesTool,
@@ -35,6 +35,7 @@ def setup_default_tools(registry: ToolRegistry = default_registry) -> ToolRegist
     # Browser tools
     registry.register(OpenUrlTool())
     registry.register(WebSearchTool())
+    registry.register(PlayMusicTool())
 
     # File tools
     registry.register(ListFilesTool())
@@ -61,4 +62,5 @@ __all__ = [
     "PendingAction",
     "setup_default_tools",
     "TakeScreenshotTool",
+    "PlayMusicTool",
 ]
