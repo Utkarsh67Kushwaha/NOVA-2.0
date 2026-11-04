@@ -8,13 +8,13 @@ logger = logging.getLogger("nova.voice.vad")
 
 
 class VoiceActivityDetector:
-    """Adaptive energy and zero-crossing rate Voice Activity Detector."""
+    """Adaptive energy, noise-floor tracking, and zero-crossing rate Voice Activity Detector."""
 
     def __init__(
         self,
-        energy_threshold: float = 0.002,
-        silence_timeout_sec: float = 1.2,
-        min_speech_duration_sec: float = 0.4,
+        energy_threshold: float = 0.0018,
+        silence_timeout_sec: float = 0.75,
+        min_speech_duration_sec: float = 0.35,
     ):
         self.energy_threshold = energy_threshold
         self.silence_timeout_sec = silence_timeout_sec
@@ -24,18 +24,27 @@ class VoiceActivityDetector:
         self.speech_start_time: Optional[float] = None
         self.last_speech_time: Optional[float] = None
         self.recorded_frames: List[np.ndarray] = []
+        self.pre_speech_buffer: List[np.ndarray] = []  # Pre-roll buffer to prevent cutting first phoneme
+        self.ambient_noise_level: float = 0.001
 
     def is_speech_frame(self, audio_chunk: np.ndarray) -> bool:
-        """Determines if a single audio chunk contains human voice activity."""
+        """Determines if a single audio chunk contains human voice activity with adaptive noise rejection."""
         # Calculate RMS energy
         energy = math.sqrt(max(1e-9, float(np.mean(audio_chunk**2))))
+
+        # Update rolling ambient noise floor during non-speech periods
+        if not self.is_speaking:
+            self.ambient_noise_level = 0.95 * self.ambient_noise_level + 0.05 * energy
+
+        # Dynamic threshold adapts to background noise (fans, PC hum)
+        effective_threshold = max(self.energy_threshold, self.ambient_noise_level * 2.5)
 
         # Calculate Zero Crossing Rate
         zero_crossings = np.nonzero(np.diff(audio_chunk > 0))[0]
         zcr = len(zero_crossings) / max(1, len(audio_chunk))
 
         # Human voice typically has sensitive energy and specific ZCR range
-        return energy > self.energy_threshold and (0.01 < zcr < 0.65)
+        return energy > effective_threshold and (0.01 < zcr < 0.65)
 
     def process_chunk(self, audio_chunk: np.ndarray) -> Optional[np.ndarray]:
         """Processes an incoming chunk. Returns complete speech array when silence finishes speaking."""
@@ -46,31 +55,42 @@ class VoiceActivityDetector:
             if not self.is_speaking:
                 self.is_speaking = True
                 self.speech_start_time = now
-                self.recorded_frames = []
+                # Include pre-speech buffer so leading consonant is never lost
+                self.recorded_frames = list(self.pre_speech_buffer)
+                self.pre_speech_buffer = []
                 logger.debug("Speech activity detected. Starting recording.")
 
             self.last_speech_time = now
             self.recorded_frames.append(audio_chunk)
             return None
 
+        # Silent frame
+        if not self.is_speaking:
+            # Maintain up to 2 frames (128ms) of pre-roll audio
+            self.pre_speech_buffer.append(audio_chunk)
+            if len(self.pre_speech_buffer) > 2:
+                self.pre_speech_buffer.pop(0)
+            return None
+
         # If currently in a speaking session but this frame is silent
-        if self.is_speaking:
-            self.recorded_frames.append(audio_chunk)
+        self.recorded_frames.append(audio_chunk)
 
-            # Check if silence timeout has elapsed
-            if self.last_speech_time and (now - self.last_speech_time >= self.silence_timeout_sec):
-                total_duration = now - (self.speech_start_time or now)
-                self.is_speaking = False
+        # Check if silence timeout has elapsed
+        if self.last_speech_time and (now - self.last_speech_time >= self.silence_timeout_sec):
+            total_duration = now - (self.speech_start_time or now)
+            self.is_speaking = False
 
-                if total_duration >= self.min_speech_duration_sec and self.recorded_frames:
-                    logger.info("Speech session completed (%.2f seconds audio captured).", total_duration)
-                    complete_audio = np.concatenate(self.recorded_frames)
-                    self.recorded_frames = []
-                    return complete_audio
-                else:
-                    logger.debug("Discarding short noise burst (%.2f sec).", total_duration)
-                    self.recorded_frames = []
-                    return None
+            if total_duration >= self.min_speech_duration_sec and self.recorded_frames:
+                logger.info("Speech session completed (%.2f seconds audio captured).", total_duration)
+                complete_audio = np.concatenate(self.recorded_frames)
+                self.recorded_frames = []
+                self.pre_speech_buffer = []
+                return complete_audio
+            else:
+                logger.debug("Discarding short noise burst (%.2f sec).", total_duration)
+                self.recorded_frames = []
+                self.pre_speech_buffer = []
+                return None
 
         return None
 
@@ -80,3 +100,4 @@ class VoiceActivityDetector:
         self.speech_start_time = None
         self.last_speech_time = None
         self.recorded_frames = []
+        self.pre_speech_buffer = []

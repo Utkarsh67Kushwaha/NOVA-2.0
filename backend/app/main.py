@@ -17,6 +17,11 @@ from backend.app.core.logger import logger
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Lifespan event handler for controlled startup and shutdown."""
     logger.info("Initializing %s v%s in %s mode...", settings.APP_NAME, settings.VERSION, settings.NOVA_ENV)
+    try:
+        from backend.app.voice.stt import stt_service
+        stt_service.warmup()
+    except Exception as exc:
+        logger.debug("Warmup error: %s", exc)
     yield
     logger.info("Shutting down %s cleanly.", settings.APP_NAME)
 
@@ -60,7 +65,6 @@ def start() -> None:
         host=settings.NOVA_HOST,
         port=settings.NOVA_PORT,
         reload=False,
-        log_level=settings.LOG_LEVEL.lower(),
     )
 
 

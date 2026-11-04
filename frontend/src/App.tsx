@@ -218,16 +218,29 @@ export default function App(): React.JSX.Element {
     }
   }, []);
 
+  // Initial data bootstrap
   useEffect(() => {
     fetchStatus();
     fetchTools();
     fetchAuditLog();
+  }, [fetchStatus, fetchTools, fetchAuditLog]);
+
+  // Low-latency polling for voice status & wake-word events (snappy 1000ms when hands-free is active)
+  useEffect(() => {
+    const pollInterval = voiceStatus?.hands_free_active ? 1000 : 3500;
     const interval = setInterval(() => {
       fetchStatus();
-      fetchAuditLog();
-    }, 3500);
+    }, pollInterval);
     return () => clearInterval(interval);
-  }, [fetchStatus, fetchTools, fetchAuditLog]);
+  }, [fetchStatus, voiceStatus?.hands_free_active]);
+
+  // Periodic audit log polling
+  useEffect(() => {
+    const interval = setInterval(() => {
+      fetchAuditLog();
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [fetchAuditLog]);
 
   // Execute Safe Tool
   const handleExecuteTool = async (toolName: string, args: Record<string, any> = {}) => {

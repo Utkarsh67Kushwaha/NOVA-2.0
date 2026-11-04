@@ -18,6 +18,19 @@ from backend.app.voice.wake_word import wake_word_detector
 logger = logging.getLogger("nova.voice.manager")
 
 
+def play_wake_chime() -> None:
+    """Non-blocking audio cue played when 'Hey NOVA' wake phrase is recognized."""
+    def _chime():
+        try:
+            import winsound
+            winsound.Beep(988, 55)   # B5 tone
+            winsound.Beep(1318, 85)  # E6 tone
+        except Exception:
+            pass
+
+    threading.Thread(target=_chime, daemon=True, name="WakeChimeWorker").start()
+
+
 class VoiceState(str, Enum):
     IDLE = "IDLE"
     LISTENING = "LISTENING"
@@ -31,7 +44,12 @@ class VoiceAssistantManager:
 
     def __init__(self):
         self.state: VoiceState = VoiceState.IDLE
-        self.vad = VoiceActivityDetector(energy_threshold=0.002, silence_timeout_sec=1.4)
+        # Optimized VAD: 0.75s silence timeout for fast responsive endpointing
+        self.vad = VoiceActivityDetector(
+            energy_threshold=0.0018,
+            silence_timeout_sec=0.75,
+            min_speech_duration_sec=0.35,
+        )
         self.last_transcript: str = ""
         self.last_response: Optional[Dict[str, Any]] = None
         self._lock = threading.Lock()
@@ -61,6 +79,7 @@ class VoiceAssistantManager:
         tts_service.stop()
         self.vad.reset()
         self.followup_active_until = 0.0
+        self._flush_audio_queue()
         self.state = VoiceState.IDLE
         logger.info("Voice Assistant interrupted.")
 
@@ -71,7 +90,16 @@ class VoiceAssistantManager:
         if muted:
             tts_service.stop()
             self.followup_active_until = 0.0
+            self._flush_audio_queue()
         return muted
+
+    def _flush_audio_queue(self) -> None:
+        """Flushes stale audio buffers from queue to prevent delayed processing."""
+        while not audio_capture.audio_queue.empty():
+            try:
+                audio_capture.audio_queue.get_nowait()
+            except Exception:
+                break
 
     def _execute_voice_action(self, prediction: Dict[str, Any], command: str) -> str:
         """Dispatches recognized intent to Safe Tools registry and returns spoken response."""
@@ -152,6 +180,7 @@ class VoiceAssistantManager:
 
             self.is_hands_free = True
             self._stop_event.clear()
+            self._flush_audio_queue()
 
             if not audio_capture.is_running:
                 audio_capture.start()
@@ -171,6 +200,7 @@ class VoiceAssistantManager:
             self.is_hands_free = False
             self._stop_event.set()
             self.followup_active_until = 0.0
+            self._flush_audio_queue()
             logger.info("Hands-free 'Hey NOVA' wake-word engine STOPPED.")
             return False
 
@@ -227,6 +257,10 @@ class VoiceAssistantManager:
                     self.state = VoiceState.IDLE
                     continue
 
+                # Play pleasant audio chime immediately on wake word confirmation
+                if is_wake:
+                    play_wake_chime()
+
                 command_to_run = clean_command if is_wake else transcript
                 command_to_run = command_to_run.strip()
 
@@ -269,6 +303,9 @@ class VoiceAssistantManager:
                 if len(self.event_history) > 50:
                     self.event_history.pop(0)
 
+                # Flush audio queue after response so self-echo doesn't loop
+                self._flush_audio_queue()
+
             except Exception as e:
                 logger.error("Error in continuous listen processing: %s", e)
             finally:
@@ -284,11 +321,7 @@ class VoiceAssistantManager:
                 audio_capture.start()
 
             # Flush any stale chunks in queue
-            while not audio_capture.audio_queue.empty():
-                try:
-                    audio_capture.audio_queue.get_nowait()
-                except Exception:
-                    break
+            self._flush_audio_queue()
 
             collected_audio = []
             start_time = time.time()
@@ -334,6 +367,9 @@ class VoiceAssistantManager:
 
                 # Step 2: Wake Word Detection / Strip
                 is_wake, clean_command = wake_word_detector.detect_and_strip(transcript)
+                if is_wake:
+                    play_wake_chime()
+
                 command_to_classify = clean_command if clean_command else transcript
 
                 # Step 3: Intent Classification
@@ -364,6 +400,7 @@ class VoiceAssistantManager:
                     "status": "success",
                 }
                 self.last_event = result_data
+                self._flush_audio_queue()
                 return result_data
 
             finally:
