@@ -8,6 +8,7 @@ import uvicorn
 
 from backend.app.api.routes import router
 from backend.app.api.voice_routes import router as voice_router
+from backend.app.api.tool_routes import router as tool_router
 from backend.app.core.config import settings
 from backend.app.core.logger import logger
 
@@ -39,6 +40,7 @@ def create_app() -> FastAPI:
 
     app.include_router(router)
     app.include_router(voice_router)
+    app.include_router(tool_router)
 
     # Serve built frontend static files if available
     dist_dir = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"

@@ -46,6 +46,8 @@ export interface CommandResult {
   entities: Record<string, any>;
   latency_ms: number;
   live_response?: string;
+  executed_tool?: string;
+  tool_result?: Record<string, any>;
   model_name: string;
   top_probabilities: Record<string, number>;
 }
@@ -67,6 +69,55 @@ export interface VoiceListenResult {
   status: string;
   error?: string;
   message?: string;
+}
+
+export interface ToolParam {
+  name: string;
+  type: string;
+  description: string;
+  required: boolean;
+  default?: any;
+  choices?: string[];
+}
+
+export interface ToolDefinition {
+  name: string;
+  description: string;
+  category: 'desktop' | 'browser' | 'file';
+  risk_level: 'READ_ONLY' | 'LOW_RISK' | 'HIGH_RISK_CONFIRMATION';
+  parameters: ToolParam[];
+}
+
+export interface ToolVerification {
+  verified: boolean;
+  method: string;
+  details: string;
+  metrics?: Record<string, any>;
+}
+
+export interface ToolExecutionResult {
+  tool_name: string;
+  success: boolean;
+  output: string;
+  data?: Record<string, any>;
+  error?: string;
+  verification?: ToolVerification;
+  requires_confirmation?: boolean;
+  confirmation_token?: string;
+  confirmation_prompt?: string;
+}
+
+export interface AuditRecord {
+  id: string;
+  tool_name: string;
+  category: string;
+  risk_level: string;
+  args: Record<string, any>;
+  status: string;
+  duration_ms: number;
+  output: string;
+  verification_status: string;
+  timestamp: string;
 }
 
 export interface NovaIPCBridge {

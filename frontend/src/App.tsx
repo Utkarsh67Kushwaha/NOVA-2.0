@@ -5,7 +5,6 @@ import {
   HardDrive,
   Power,
   RefreshCw,
-  Server,
   Settings,
   ShieldCheck,
   Terminal,
@@ -22,8 +21,21 @@ import {
   Volume2,
   Square,
   AudioWaveform as Waveform,
+  Wrench,
+  AlertTriangle,
+  XCircle,
+  RotateCcw,
 } from 'lucide-react';
-import { HealthData, SystemStatusData, CommandResult, VoiceStatus, VoiceListenResult } from './types';
+import {
+  HealthData,
+  SystemStatusData,
+  CommandResult,
+  VoiceStatus,
+  VoiceListenResult,
+  ToolDefinition,
+  ToolExecutionResult,
+  AuditRecord,
+} from './types';
 
 const BACKEND_URL = 'http://127.0.0.1:8000';
 
@@ -64,6 +76,17 @@ export default function App(): React.JSX.Element {
   const [isListening, setIsListening] = useState<boolean>(false);
   const [voiceResult, setVoiceResult] = useState<VoiceListenResult | null>(null);
 
+  // Phase 4: Safe Tools State
+  const [toolsList, setToolsList] = useState<ToolDefinition[]>([]);
+  const [auditEntries, setAuditEntries] = useState<AuditRecord[]>([]);
+  const [lastToolResult, setLastToolResult] = useState<ToolExecutionResult | null>(null);
+  const [pendingConfirmation, setPendingConfirmation] = useState<{
+    token: string;
+    prompt: string;
+    toolName: string;
+  } | null>(null);
+  const [isExecutingTool, setIsExecutingTool] = useState<boolean>(false);
+
   const logContainerRef = useRef<HTMLDivElement>(null);
 
   const addLog = useCallback((message: string, level: LogEntry['level'] = 'info') => {
@@ -75,20 +98,46 @@ export default function App(): React.JSX.Element {
   useEffect(() => {
     if (window.novaAPI) {
       setIsElectron(true);
-      addLog('Electron IPC initialized successfully.', 'success');
+      addLog(`Initialized under Electron runtime (${window.novaAPI.platform})`, 'info');
       window.novaAPI
         .getLoginItemSettings()
-        .then((val) => setAutoStartup(val))
-        .catch((err) => addLog(`Failed to query startup settings: ${err}`, 'warn'));
+        .then((enabled) => setAutoStartup(enabled))
+        .catch(() => addLog('Failed to query auto-startup configuration.', 'warn'));
     } else {
       setIsElectron(false);
-      addLog('Running in standalone browser mode. Electron IPC bridge unavailable.', 'info');
+      addLog('Running in standard browser mode (Electron IPC disabled).', 'info');
     }
   }, [addLog]);
 
-  // Poll Backend Health, System Status & Voice Status
-  const checkBackend = useCallback(async () => {
-    const startTime = performance.now();
+  // Fetch Safe Tools Catalog
+  const fetchTools = useCallback(async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/tools`);
+      if (res.ok) {
+        const data = await res.json();
+        setToolsList(data.tools || []);
+      }
+    } catch {
+      // Backend not yet reachable
+    }
+  }, []);
+
+  // Fetch Tool Audit History
+  const fetchAuditLog = useCallback(async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/tools/audit?limit=20`);
+      if (res.ok) {
+        const data = await res.json();
+        setAuditEntries(data.entries || []);
+      }
+    } catch {
+      // Ignore
+    }
+  }, []);
+
+  // Fetch backend status
+  const fetchStatus = useCallback(async () => {
+    const start = performance.now();
     try {
       const [healthRes, statusRes, voiceRes] = await Promise.all([
         fetch(`${BACKEND_URL}/health`),
@@ -96,100 +145,204 @@ export default function App(): React.JSX.Element {
         fetch(`${BACKEND_URL}/api/voice/status`).catch(() => null),
       ]);
 
-      const roundTrip = Math.round(performance.now() - startTime);
-      setLatencyMs(roundTrip);
+      const roundtrip = Math.round(performance.now() - start);
+      setLatencyMs(roundtrip);
 
       if (healthRes.ok && statusRes.ok) {
-        const healthJson: HealthData = await healthRes.json();
-        const statusJson: SystemStatusData = await statusRes.json();
-        setHealth(healthJson);
-        setSystemStatus(statusJson);
+        const healthData: HealthData = await healthRes.json();
+        const statusData: SystemStatusData = await statusRes.json();
+
+        setHealth(healthData);
+        setSystemStatus(statusData);
+        setIsBackendConnected(true);
 
         if (voiceRes && voiceRes.ok) {
-          const voiceJson: VoiceStatus = await voiceRes.json();
-          setVoiceStatus(voiceJson);
-        }
-
-        if (!isBackendConnected) {
-          setIsBackendConnected(true);
-          addLog(
-            `Connected to FastAPI backend: ${healthJson.app} (v${healthJson.version}) in ${roundTrip}ms`,
-            'success'
-          );
+          const vData: VoiceStatus = await voiceRes.json();
+          setVoiceStatus(vData);
         }
       } else {
-        throw new Error(`HTTP status: ${healthRes.status}/${statusRes.status}`);
-      }
-    } catch (err: unknown) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      if (isBackendConnected) {
         setIsBackendConnected(false);
-        addLog(`Backend unreachable: ${errorMsg}`, 'error');
       }
-      setHealth(null);
-      setLatencyMs(null);
+    } catch {
+      setIsBackendConnected(false);
     }
-  }, [isBackendConnected, addLog]);
+  }, []);
 
-  // Periodic polling every 3 seconds
   useEffect(() => {
-    checkBackend();
-    const interval = setInterval(checkBackend, 3000);
+    fetchStatus();
+    fetchTools();
+    fetchAuditLog();
+    const interval = setInterval(() => {
+      fetchStatus();
+      fetchAuditLog();
+    }, 3500);
     return () => clearInterval(interval);
-  }, [checkBackend]);
+  }, [fetchStatus, fetchTools, fetchAuditLog]);
 
-  // Auto-scroll logs
-  useEffect(() => {
-    if (logContainerRef.current) {
-      logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
-    }
-  }, [logs]);
-
-  const handleManualRefresh = async () => {
-    setIsRefreshing(true);
-    addLog('Manual probe triggered...', 'info');
-    await checkBackend();
-    setIsRefreshing(false);
-  };
-
-  const handleToggleStartup = async () => {
-    if (!window.novaAPI) {
-      addLog('Startup configuration requires running within Electron desktop shell.', 'warn');
-      return;
-    }
-    const nextVal = !autoStartup;
+  // Execute Safe Tool
+  const handleExecuteTool = async (toolName: string, args: Record<string, any> = {}) => {
+    setIsExecutingTool(true);
+    addLog(`Executing safe tool '${toolName}' with arguments: ${JSON.stringify(args)}`, 'info');
     try {
-      const confirmed = await window.novaAPI.setLoginItemSettings(nextVal);
-      setAutoStartup(confirmed);
-      addLog(
-        `Windows login startup ${confirmed ? 'ENABLED' : 'DISABLED'}`,
-        confirmed ? 'success' : 'info'
-      );
+      const res = await fetch(`${BACKEND_URL}/api/tools/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tool_name: toolName, args }),
+      });
+      const data = await res.json();
+      const result: ToolExecutionResult = data.result;
+      setLastToolResult(result);
+
+      if (result.requires_confirmation && result.confirmation_token) {
+        setPendingConfirmation({
+          token: result.confirmation_token,
+          prompt: result.confirmation_prompt || 'Are you sure you want to proceed?',
+          toolName: result.tool_name,
+        });
+        addLog(`⚠️ Confirmation required for '${toolName}': ${result.confirmation_prompt}`, 'warn');
+      } else if (result.success) {
+        addLog(`Tool '${toolName}' executed successfully. Verification: ${result.verification?.method ?? 'Checked'}`, 'success');
+      } else {
+        addLog(`Tool '${toolName}' failed: ${result.error || result.output}`, 'error');
+      }
+      fetchAuditLog();
     } catch (err) {
-      addLog(`Failed to change startup setting: ${err}`, 'error');
+      addLog(`Tool execution network error: ${err}`, 'error');
+    } finally {
+      setIsExecutingTool(false);
     }
   };
 
-  const handleMinimize = () => {
-    if (window.novaAPI) {
-      addLog('Window minimized to system tray.', 'info');
-      window.novaAPI.minimizeToTray();
+  // Confirm sensitive action
+  const handleConfirmAction = async (token: string) => {
+    try {
+      addLog(`Sending explicit user confirmation for token ${token}...`, 'info');
+      const res = await fetch(`${BACKEND_URL}/api/tools/confirm`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      });
+      const data = await res.json();
+      setLastToolResult(data.result);
+      setPendingConfirmation(null);
+      addLog(`Confirmed action executed: ${data.result?.output}`, 'success');
+      fetchAuditLog();
+    } catch (err) {
+      addLog(`Confirmation error: ${err}`, 'error');
     }
   };
 
-  const handleQuit = () => {
-    if (window.novaAPI) {
-      addLog('Initiating graceful desktop application shutdown...', 'warn');
-      window.novaAPI.quitApp();
+  // Reject sensitive action
+  const handleRejectAction = async (token: string) => {
+    try {
+      addLog(`User rejected confirmation for token ${token}.`, 'warn');
+      await fetch(`${BACKEND_URL}/api/tools/reject`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      });
+      setPendingConfirmation(null);
+      addLog(`Action successfully cancelled.`, 'info');
+      fetchAuditLog();
+    } catch (err) {
+      addLog(`Rejection error: ${err}`, 'error');
     }
   };
 
+  // Phase 3: Voice Listen Once
+  const handleListenOnce = async () => {
+    if (isListening) return;
+    setIsListening(true);
+    addLog('Mic activated: Listening for 3.5s speech input...', 'info');
+
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/voice/listen-once`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ duration_seconds: 3.5 }),
+      });
+
+      if (res.ok) {
+        const data: VoiceListenResult = await res.json();
+        setVoiceResult(data);
+
+        if (data.status === 'success' && data.transcript) {
+          addLog(`Voice Transcription: "${data.transcript}"`, 'success');
+          if (data.prediction) {
+            setCommandResult(data.prediction);
+            addLog(
+              `ML Intent Identified: ${data.prediction.intent} (${data.prediction.confidence_percent}%)`,
+              'info'
+            );
+          }
+          if (data.spoken_response) {
+            addLog(`NOVA Spoke: "${data.spoken_response}"`, 'info');
+          }
+        } else if (data.status === 'no_speech') {
+          addLog('No speech detected during recording window.', 'warn');
+        } else if (data.status === 'muted') {
+          addLog('Microphone is currently muted.', 'warn');
+        }
+      } else {
+        addLog('Voice listen endpoint returned non-200 status.', 'error');
+      }
+    } catch (err) {
+      addLog(`Voice error: ${err}`, 'error');
+    } finally {
+      setIsListening(false);
+      fetchStatus();
+      fetchAuditLog();
+    }
+  };
+
+  // Test Speech Synthesis
+  const handleTestTTS = async () => {
+    addLog('Testing local speech synthesis (SAPI5)...', 'info');
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/voice/speak`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: 'Hello, I am NOVA. Local speech synthesis is active and running.' }),
+      });
+      if (res.ok) {
+        addLog('TTS speech synthesis played successfully.', 'success');
+      }
+    } catch (err) {
+      addLog(`TTS failed: ${err}`, 'error');
+    }
+  };
+
+  // Interrupt Speech
+  const handleInterrupt = async () => {
+    addLog('Interrupt signal sent to NOVA Voice Engine.', 'warn');
+    try {
+      await fetch(`${BACKEND_URL}/api/voice/interrupt`, { method: 'POST' });
+    } catch (err) {
+      addLog(`Interrupt error: ${err}`, 'error');
+    }
+  };
+
+  // Toggle Mute
+  const handleToggleMute = async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/voice/toggle-mute`, { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        addLog(`Microphone is now ${data.is_muted ? 'MUTED' : 'UNMUTED'}`, data.is_muted ? 'warn' : 'info');
+        setVoiceStatus((prev) => (prev ? { ...prev, is_muted: data.is_muted } : null));
+      }
+    } catch (err) {
+      addLog(`Toggle mute failed: ${err}`, 'error');
+    }
+  };
+
+  // Classify command
   const handleClassifyCommand = async (textToClassify?: string) => {
-    const text = (textToClassify ?? commandInput).trim();
-    if (!text) return;
+    const text = textToClassify ?? commandInput;
+    if (!text.trim()) return;
 
     setIsClassifying(true);
-    addLog(`Classifying command: "${text}"`, 'info');
+    addLog(`Sending command to ML Intent Brain: "${text}"`, 'info');
 
     try {
       const res = await fetch(`${BACKEND_URL}/api/command`, {
@@ -198,307 +351,449 @@ export default function App(): React.JSX.Element {
         body: JSON.stringify({ text }),
       });
 
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-      }
+      if (res.ok) {
+        const result: CommandResult = await res.json();
+        setCommandResult(result);
 
-      const result: CommandResult = await res.json();
-      setCommandResult(result);
-
-      if (result.needs_clarification) {
-        addLog(
-          `Command flagged UNKNOWN_INTENT (Confidence: ${result.confidence_percent}% < 65% threshold)`,
-          'warn'
-        );
+        if (result.needs_clarification) {
+          addLog(
+            `Unknown/Low-confidence command: "${text}" (Score: ${result.confidence_percent}% < ${result.threshold * 100}%). Clarification requested.`,
+            'warn'
+          );
+        } else {
+          addLog(
+            `Intent: ${result.intent} | Confidence: ${result.confidence_percent}% | Latency: ${result.latency_ms}ms`,
+            'success'
+          );
+          if (result.executed_tool) {
+            addLog(`Automatically routed to safe tool: '${result.executed_tool}'`, 'info');
+          }
+        }
+        fetchAuditLog();
       } else {
-        addLog(
-          `Classified as ${result.intent} (${result.confidence_percent}% confidence in ${result.latency_ms}ms)`,
-          'success'
-        );
+        addLog(`ML classification failed with status ${res.status}`, 'error');
       }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      addLog(`Classification failed: ${msg}`, 'error');
+    } catch (err) {
+      addLog(`Classification error: ${err}`, 'error');
     } finally {
       setIsClassifying(false);
     }
   };
 
-  // Phase 3: Voice Engine Handlers
-  const handleListenOnce = async () => {
-    if (isListening) return;
+  const handleManualRefresh = async () => {
+    setIsRefreshing(true);
+    addLog('Manual diagnostic refresh requested.', 'info');
+    await Promise.all([fetchStatus(), fetchTools(), fetchAuditLog()]);
+    setIsRefreshing(false);
+    addLog('Diagnostic metrics refreshed.', 'success');
+  };
 
-    setIsListening(true);
-    addLog('Voice Engine: Listening to microphone input (Speak now)...', 'info');
-
+  const toggleAutoStartup = async () => {
+    if (!window.novaAPI) {
+      addLog('Auto-startup toggle is only available when running in Electron desktop shell.', 'warn');
+      return;
+    }
+    const nextState = !autoStartup;
     try {
-      const res = await fetch(`${BACKEND_URL}/api/voice/listen-once`, { method: 'POST' });
-      if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-
-      const result: VoiceListenResult = await res.json();
-      setVoiceResult(result);
-
-      if (result.status === 'success') {
-        addLog(`Voice Transcribed: "${result.transcript}"`, 'success');
-        if (result.prediction) {
-          setCommandResult(result.prediction);
-        }
-        if (result.spoken_response) {
-          addLog(`NOVA Spoke: "${result.spoken_response}"`, 'success');
-        }
-      } else {
-        addLog(`Voice Engine: ${result.message ?? result.error ?? 'No speech detected.'}`, 'warn');
+      const success = await window.novaAPI.setLoginItemSettings(nextState);
+      if (success) {
+        setAutoStartup(nextState);
+        addLog(`Windows auto-startup changed to: ${nextState ? 'ENABLED' : 'DISABLED'}`, 'success');
       }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      addLog(`Voice capture error: ${msg}`, 'error');
-    } finally {
-      setIsListening(false);
-      checkBackend();
+    } catch {
+      addLog('Failed to update Windows login settings.', 'error');
     }
   };
 
-  const handleTestTTS = async () => {
-    addLog('Testing local TTS voice output...', 'info');
-    try {
-      await fetch(`${BACKEND_URL}/api/voice/speak`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text: 'Hello! I am NOVA, your desktop AI assistant. Voice engine is fully operational.',
-        }),
-      });
-      addLog('TTS voice synthesized successfully.', 'success');
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      addLog(`TTS test error: ${msg}`, 'error');
+  const handleMinimizeToTray = () => {
+    if (window.novaAPI) {
+      addLog('Minimizing to system tray resident state.', 'info');
+      window.novaAPI.minimizeToTray();
     }
   };
 
-  const handleInterrupt = async () => {
-    addLog('Interrupt signal sent to Voice Engine.', 'warn');
-    try {
-      await fetch(`${BACKEND_URL}/api/voice/interrupt`, { method: 'POST' });
-      setIsListening(false);
-      checkBackend();
-    } catch (err) {
-      addLog(`Failed to interrupt: ${err}`, 'error');
-    }
-  };
-
-  const handleToggleMute = async () => {
-    try {
-      const res = await fetch(`${BACKEND_URL}/api/voice/toggle-mute`, { method: 'POST' });
-      const data = await res.json();
-      addLog(`Microphone ${data.is_muted ? 'MUTED' : 'UNMUTED'}`, data.is_muted ? 'warn' : 'info');
-      checkBackend();
-    } catch (err) {
-      addLog(`Failed to toggle mute: ${err}`, 'error');
+  const handleQuit = () => {
+    if (window.novaAPI) {
+      addLog('Terminating application.', 'warn');
+      window.novaAPI.quitApp();
     }
   };
 
   return (
-    <div className="flex flex-col h-screen w-screen bg-nova-dark text-slate-100 overflow-hidden select-none">
+    <div className="flex flex-col h-screen w-screen bg-nova-dark text-slate-100 font-sans select-none overflow-hidden">
       {/* Top Navigation Bar */}
-      <header className="flex items-center justify-between px-6 py-3 bg-nova-panel border-b border-nova-border/70">
+      <header className="h-12 border-b border-nova-border bg-nova-panel flex items-center justify-between px-4 z-10 shrink-0">
         <div className="flex items-center space-x-3">
-          <div className="relative flex items-center justify-center w-8 h-8 rounded-lg bg-nova-cyan/20 border border-nova-cyan/40">
-            <Radio className="w-5 h-5 text-nova-cyan animate-pulse" />
+          <div className="flex items-center space-x-2">
+            <div className="w-3 h-3 rounded-full bg-nova-cyan animate-pulse shadow-[0_0_8px_#06b6d4]" />
+            <span className="font-bold tracking-wider text-sm text-white">
+              {health?.app ? `${health.app} v${health.version}` : 'NOVA 2.0'}
+            </span>
           </div>
-          <div>
-            <h1 className="text-base font-bold tracking-wider uppercase text-white flex items-center gap-2">
-              NOVA{' '}
-              <span className="text-xs px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/30">
-                Phase 3: Voice Engine
-              </span>
-            </h1>
-            <p className="text-[11px] text-slate-400">Desktop AI Assistant • Faster-Whisper & Neural TTS Active</p>
-          </div>
+          <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-cyan-950/80 text-nova-cyan border border-cyan-800/40">
+            Phase 4: Safe Tools & Execution
+          </span>
+          {isElectron && (
+            <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-purple-950/80 text-purple-300 border border-purple-800/40">
+              Desktop Shell (Sandboxed)
+            </span>
+          )}
         </div>
 
-        {/* Status Pill & Controls */}
-        <div className="flex items-center space-x-3">
-          <div
-            className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium border ${
-              isBackendConnected
-                ? 'bg-nova-success/10 text-emerald-400 border-nova-success/30'
-                : 'bg-nova-danger/10 text-rose-400 border-nova-danger/30'
-            }`}
-          >
-            <span
-              className={`w-2 h-2 rounded-full ${
-                isBackendConnected ? 'bg-emerald-400 animate-ping' : 'bg-rose-500'
+        <div className="flex items-center space-x-2">
+          {/* Connection Status Indicator */}
+          <div className="flex items-center space-x-2 px-2.5 py-1 rounded bg-nova-card border border-nova-border text-xs">
+            <Radio
+              className={`w-3.5 h-3.5 ${
+                isBackendConnected ? 'text-emerald-400 animate-pulse' : 'text-rose-500'
               }`}
             />
-            {isBackendConnected ? `Backend Online (${latencyMs ?? 0}ms)` : 'Backend Offline'}
+            <span className="font-medium text-[11px]">
+              {isBackendConnected
+                ? `FastAPI: Connected (${latencyMs ?? 0}ms)`
+                : 'FastAPI: Disconnected'}
+            </span>
           </div>
 
           <button
             onClick={handleManualRefresh}
-            title="Refresh status"
-            className="p-1.5 rounded-lg bg-nova-card hover:bg-slate-700 text-slate-300 border border-nova-border transition"
+            disabled={isRefreshing}
+            className="p-1.5 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition"
+            title="Refresh Diagnostics"
           >
             <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-nova-cyan' : ''}`} />
           </button>
 
           {isElectron && (
-            <button
-              onClick={handleMinimize}
-              title="Minimize to Tray"
-              className="p-1.5 rounded-lg bg-nova-card hover:bg-slate-700 text-slate-300 border border-nova-border transition"
-            >
-              <Minimize2 className="w-4 h-4" />
-            </button>
-          )}
-
-          {isElectron && (
-            <button
-              onClick={handleQuit}
-              title="Quit App"
-              className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 transition"
-            >
-              <Power className="w-4 h-4" />
-            </button>
+            <>
+              <button
+                onClick={handleMinimizeToTray}
+                className="p-1.5 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition"
+                title="Minimize to System Tray"
+              >
+                <Minimize2 className="w-4 h-4" />
+              </button>
+              <button
+                onClick={handleQuit}
+                className="p-1.5 rounded hover:bg-rose-900/40 text-slate-400 hover:text-rose-400 transition"
+                title="Quit NOVA"
+              >
+                <Power className="w-4 h-4" />
+              </button>
+            </>
           )}
         </div>
       </header>
 
-      {/* Main Content Area */}
-      <main className="flex-1 p-6 overflow-y-auto space-y-6">
-        {/* System Cards Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-          {/* 1. Backend Service Card */}
-          <div className="p-5 rounded-xl bg-nova-panel border border-nova-border shadow-lg flex flex-col justify-between">
-            <div>
-              <div className="flex items-center justify-between mb-4">
-                <span className="text-xs uppercase font-semibold text-slate-400 tracking-wider">FastAPI Core</span>
-                <Server className="w-4 h-4 text-nova-cyan" />
-              </div>
-              <div className="text-2xl font-bold tracking-tight text-white mb-1">
-                {health?.status === 'healthy' ? 'Healthy' : 'Disconnected'}
-              </div>
-              <div className="text-xs text-slate-400 mb-4">
-                ML Model: <span className="text-emerald-400 font-mono font-medium">{systemStatus?.app.ml_model ?? 'Multinomial Naive Bayes'}</span>
-              </div>
-
-              <div className="space-y-2 border-t border-nova-border/60 pt-3 text-xs">
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Version:</span>
-                  <span className="font-mono text-slate-200">{health?.version ?? 'N/A'}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Environment:</span>
-                  <span className="capitalize text-slate-200">{health?.environment ?? 'N/A'}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Uptime:</span>
-                  <span className="font-mono text-slate-200">{health ? `${health.uptime_seconds}s` : '0s'}</span>
-                </div>
-              </div>
+      {/* Main Scrollable Dashboard Content */}
+      <main className="flex-1 overflow-y-auto p-6 space-y-5">
+        {/* Hardware & System Resource Metrics Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          {/* CPU Card */}
+          <div className="p-4 rounded-xl bg-nova-panel border border-nova-border shadow-md space-y-2">
+            <div className="flex items-center justify-between text-slate-400 text-xs">
+              <span className="font-semibold uppercase tracking-wider flex items-center gap-1.5">
+                <Cpu className="w-4 h-4 text-nova-cyan" /> CPU Load
+              </span>
+              <span className="font-mono text-nova-cyan">
+                {systemStatus?.resources.cpu_percent ?? 0}%
+              </span>
             </div>
-
-            <div className="mt-4 pt-3 border-t border-nova-border/60 flex items-center gap-2 text-[11px] text-slate-400">
-              <ShieldCheck className="w-3.5 h-3.5 text-nova-cyan" />
-              CORS & Safe Lifespan Active
+            <div className="w-full h-1.5 rounded-full bg-slate-800 overflow-hidden">
+              <div
+                className="h-full bg-nova-cyan transition-all duration-300"
+                style={{ width: `${systemStatus?.resources.cpu_percent ?? 0}%` }}
+              />
             </div>
+            <p className="text-[11px] text-slate-500 truncate">
+              {systemStatus?.system.processor ?? 'AMD Ryzen 5 5600H'}
+            </p>
           </div>
 
-          {/* 2. Hardware Resource Metrics Card */}
-          <div className="p-5 rounded-xl bg-nova-panel border border-nova-border shadow-lg flex flex-col justify-between">
-            <div>
-              <div className="flex items-center justify-between mb-4">
-                <span className="text-xs uppercase font-semibold text-slate-400 tracking-wider">Host Resources</span>
-                <Cpu className="w-4 h-4 text-emerald-400" />
-              </div>
-              <div className="text-2xl font-bold tracking-tight text-white mb-1">
-                {systemStatus ? `${systemStatus.resources.cpu_percent}% CPU` : '--'}
-              </div>
-              <div className="text-xs text-slate-400 mb-4">
-                RAM: {systemStatus ? `${systemStatus.resources.ram_used_gb} / ${systemStatus.resources.ram_total_gb} GB (${systemStatus.resources.ram_percent}%)` : '--'}
-              </div>
-
-              {/* Progress bars */}
-              <div className="space-y-3 border-t border-nova-border/60 pt-3 text-xs">
-                <div>
-                  <div className="flex justify-between text-[11px] text-slate-400 mb-1">
-                    <span>RAM Load</span>
-                    <span>{systemStatus?.resources.ram_percent ?? 0}%</span>
-                  </div>
-                  <div className="w-full h-1.5 rounded-full bg-slate-800 overflow-hidden">
-                    <div
-                      className="h-full bg-gradient-to-r from-teal-500 to-emerald-400 transition-all duration-500"
-                      style={{ width: `${systemStatus?.resources.ram_percent ?? 0}%` }}
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <div className="flex justify-between text-[11px] text-slate-400 mb-1">
-                    <span>Disk Used (C:\)</span>
-                    <span>{systemStatus?.resources.disk_percent ?? 0}%</span>
-                  </div>
-                  <div className="w-full h-1.5 rounded-full bg-slate-800 overflow-hidden">
-                    <div
-                      className="h-full bg-cyan-500 transition-all duration-500"
-                      style={{ width: `${systemStatus?.resources.disk_percent ?? 0}%` }}
-                    />
-                  </div>
-                </div>
-              </div>
+          {/* RAM Card */}
+          <div className="p-4 rounded-xl bg-nova-panel border border-nova-border shadow-md space-y-2">
+            <div className="flex items-center justify-between text-slate-400 text-xs">
+              <span className="font-semibold uppercase tracking-wider flex items-center gap-1.5">
+                <Activity className="w-4 h-4 text-purple-400" /> Memory (RAM)
+              </span>
+              <span className="font-mono text-purple-400">
+                {systemStatus?.resources.ram_percent ?? 0}%
+              </span>
             </div>
-
-            <div className="mt-4 pt-3 border-t border-nova-border/60 flex items-center justify-between text-[11px] text-slate-400">
-              <span className="truncate">{systemStatus?.system.os ?? 'Detecting OS...'}</span>
-              <HardDrive className="w-3.5 h-3.5 text-slate-400" />
+            <div className="w-full h-1.5 rounded-full bg-slate-800 overflow-hidden">
+              <div
+                className="h-full bg-purple-500 transition-all duration-300"
+                style={{ width: `${systemStatus?.resources.ram_percent ?? 0}%` }}
+              />
             </div>
+            <p className="text-[11px] text-slate-500">
+              {systemStatus
+                ? `${systemStatus.resources.ram_used_gb} GB used of ${systemStatus.resources.ram_total_gb} GB`
+                : '16.0 GB total'}
+            </p>
           </div>
 
-          {/* 3. Windows Lifecycle & Startup Card */}
-          <div className="p-5 rounded-xl bg-nova-panel border border-nova-border shadow-lg flex flex-col justify-between">
-            <div>
-              <div className="flex items-center justify-between mb-4">
-                <span className="text-xs uppercase font-semibold text-slate-400 tracking-wider">Desktop Shell</span>
-                <Settings className="w-4 h-4 text-purple-400" />
-              </div>
-              <div className="text-2xl font-bold tracking-tight text-white mb-1">
-                {isElectron ? 'Electron Active' : 'Browser Mode'}
-              </div>
-              <div className="text-xs text-slate-400 mb-4">Single Instance & Tray Resident</div>
+          {/* Storage Card */}
+          <div className="p-4 rounded-xl bg-nova-panel border border-nova-border shadow-md space-y-2">
+            <div className="flex items-center justify-between text-slate-400 text-xs">
+              <span className="font-semibold uppercase tracking-wider flex items-center gap-1.5">
+                <HardDrive className="w-4 h-4 text-emerald-400" /> SSD Storage (C:)
+              </span>
+              <span className="font-mono text-emerald-400">
+                {systemStatus?.resources.disk_percent ?? 0}%
+              </span>
+            </div>
+            <div className="w-full h-1.5 rounded-full bg-slate-800 overflow-hidden">
+              <div
+                className="h-full bg-emerald-500 transition-all duration-300"
+                style={{ width: `${systemStatus?.resources.disk_percent ?? 0}%` }}
+              />
+            </div>
+            <p className="text-[11px] text-slate-500">
+              {systemStatus
+                ? `${systemStatus.resources.disk_free_gb} GB free of ${systemStatus.resources.disk_total_gb} GB`
+                : 'Storage ready'}
+            </p>
+          </div>
 
-              <div className="space-y-3 border-t border-nova-border/60 pt-3 text-xs">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="font-medium text-slate-200">Start with Windows</div>
-                    <div className="text-[11px] text-slate-400">Launch after user login</div>
-                  </div>
-                  <button
-                    onClick={handleToggleStartup}
-                    disabled={!isElectron}
-                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                      autoStartup ? 'bg-nova-cyan' : 'bg-slate-700'
-                    } ${!isElectron ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
-                  >
-                    <span
-                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                        autoStartup ? 'translate-x-6' : 'translate-x-1'
-                      }`}
-                    />
-                  </button>
-                </div>
-
-                <div className="flex justify-between items-center pt-2">
-                  <span className="text-slate-400">System Tray:</span>
-                  <span className="inline-flex items-center gap-1 text-emerald-400">
-                    <CheckCircle2 className="w-3.5 h-3.5" />
-                    Resident
-                  </span>
-                </div>
-              </div>
+          {/* Foundation & Settings Card */}
+          <div className="p-4 rounded-xl bg-nova-panel border border-nova-border shadow-md flex flex-col justify-between">
+            <div className="flex items-center justify-between text-slate-400 text-xs">
+              <span className="font-semibold uppercase tracking-wider flex items-center gap-1.5">
+                <Settings className="w-4 h-4 text-amber-400" /> Startup & Tray
+              </span>
+              <span className="text-emerald-400 flex items-center gap-1 text-[11px]">
+                <CheckCircle2 className="w-3 h-3" /> Ready
+              </span>
             </div>
 
-            <div className="mt-4 pt-3 border-t border-nova-border/60 flex items-center gap-2 text-[11px] text-slate-400">
+            <div className="flex items-center justify-between pt-2">
+              <span className="text-xs text-slate-300">Run at Windows Login:</span>
+              <button
+                onClick={toggleAutoStartup}
+                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                  autoStartup ? 'bg-nova-cyan' : 'bg-slate-700'
+                }`}
+              >
+                <span
+                  className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                    autoStartup ? 'translate-x-4' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+            </div>
+
+            <div className="pt-2 border-t border-nova-border/60 flex items-center gap-2 text-[11px] text-slate-400">
               <Activity className="w-3.5 h-3.5 text-purple-400" />
               IPC Security: Sandboxed contextBridge
+            </div>
+          </div>
+        </div>
+
+        {/* Phase 4: SAFE TOOLS & PERMISSION-CONTROLLED EXECUTION MODULE */}
+        <div className="rounded-xl bg-gradient-to-r from-slate-900 to-nova-panel border border-emerald-500/30 shadow-xl p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/30">
+                <ShieldCheck className="w-5 h-5 text-emerald-400" />
+              </div>
+              <div>
+                <h2 className="text-sm font-bold uppercase tracking-wider text-white flex items-center gap-2">
+                  Safe Tools & Execution Engine (Allowlisted & Sandboxed)
+                </h2>
+                <p className="text-[11px] text-slate-400">
+                  Strict process bounds • Zero arbitrary shell execution • Path sandboxing • Post-action verification
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] px-2.5 py-1 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 font-mono">
+                {toolsList.length} Allowlisted Tools
+              </span>
+              <button
+                onClick={fetchAuditLog}
+                className="px-2.5 py-1 rounded bg-nova-card hover:bg-slate-700 text-slate-300 border border-nova-border text-xs flex items-center gap-1.5 transition"
+              >
+                <RotateCcw className="w-3 h-3 text-emerald-400" />
+                Audit Logs
+              </button>
+            </div>
+          </div>
+
+          {/* Quick Tool Execution Buttons */}
+          <div className="space-y-2">
+            <span className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider flex items-center gap-1.5">
+              <Wrench className="w-3.5 h-3.5 text-emerald-400" />
+              Instant Tool Testers:
+            </span>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => handleExecuteTool('launch_app', { app_name: 'notepad' })}
+                disabled={isExecutingTool}
+                className="px-3 py-1.5 rounded-lg bg-nova-card hover:bg-slate-700 text-xs font-semibold text-slate-200 border border-nova-border flex items-center gap-1.5 transition"
+              >
+                📝 Launch Notepad
+              </button>
+
+              <button
+                onClick={() => handleExecuteTool('launch_app', { app_name: 'calc' })}
+                disabled={isExecutingTool}
+                className="px-3 py-1.5 rounded-lg bg-nova-card hover:bg-slate-700 text-xs font-semibold text-slate-200 border border-nova-border flex items-center gap-1.5 transition"
+              >
+                🧮 Launch Calculator
+              </button>
+
+              <button
+                onClick={() => handleExecuteTool('system_status', { metric_filter: 'battery' })}
+                disabled={isExecutingTool}
+                className="px-3 py-1.5 rounded-lg bg-nova-card hover:bg-slate-700 text-xs font-semibold text-slate-200 border border-nova-border flex items-center gap-1.5 transition"
+              >
+                🔋 Read Battery
+              </button>
+
+              <button
+                onClick={() => handleExecuteTool('web_search', { query: 'FastAPI Python desktop AI' })}
+                disabled={isExecutingTool}
+                className="px-3 py-1.5 rounded-lg bg-nova-card hover:bg-slate-700 text-xs font-semibold text-slate-200 border border-nova-border flex items-center gap-1.5 transition"
+              >
+                🌐 Safe Web Search
+              </button>
+
+              <button
+                onClick={() => handleExecuteTool('list_files', { directory_path: '.' })}
+                disabled={isExecutingTool}
+                className="px-3 py-1.5 rounded-lg bg-nova-card hover:bg-slate-700 text-xs font-semibold text-slate-200 border border-nova-border flex items-center gap-1.5 transition"
+              >
+                📁 List Workspace Files
+              </button>
+
+              <button
+                onClick={() => handleExecuteTool('search_files', { query: '*.py', root_dir: '.' })}
+                disabled={isExecutingTool}
+                className="px-3 py-1.5 rounded-lg bg-nova-card hover:bg-slate-700 text-xs font-semibold text-slate-200 border border-nova-border flex items-center gap-1.5 transition"
+              >
+                🔍 Search *.py Files
+              </button>
+
+              <button
+                onClick={() => handleExecuteTool('create_file', { file_path: 'backend/tests/_test_scratch.txt', content: 'Testing safe create tool!' })}
+                disabled={isExecutingTool}
+                className="px-3 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-xs font-semibold text-rose-300 border border-rose-500/30 flex items-center gap-1.5 transition"
+              >
+                ⚠️ Test High-Risk Overwrite
+              </button>
+            </div>
+          </div>
+
+          {/* Pending User Confirmation Dialog / Banner */}
+          {pendingConfirmation && (
+            <div className="p-4 rounded-xl bg-amber-950/60 border border-amber-500/50 space-y-3 animate-pulse">
+              <div className="flex items-start gap-2.5">
+                <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                <div className="flex-1 space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold uppercase tracking-wider text-amber-200">
+                      User Permission Confirmation Required
+                    </span>
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/20 text-amber-300">
+                      Token: {pendingConfirmation.token.substring(0, 8)}...
+                    </span>
+                  </div>
+                  <p className="text-xs text-amber-100">{pendingConfirmation.prompt}</p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3 justify-end pt-1">
+                <button
+                  onClick={() => handleRejectAction(pendingConfirmation.token)}
+                  className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-300 border border-slate-700 flex items-center gap-1.5 transition"
+                >
+                  <XCircle className="w-3.5 h-3.5 text-rose-400" />
+                  Reject / Cancel
+                </button>
+                <button
+                  onClick={() => handleConfirmAction(pendingConfirmation.token)}
+                  className="px-4 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold flex items-center gap-1.5 transition shadow-lg shadow-amber-500/30"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  Approve Execution
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Last Execution Outcome Card */}
+          {lastToolResult && (
+            <div className="p-4 rounded-xl bg-nova-dark/90 border border-emerald-500/30 space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-slate-400">Tool Executed:</span>
+                  <span className="font-mono text-emerald-300 text-sm font-bold">
+                    {lastToolResult.tool_name}
+                  </span>
+                  <span
+                    className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                      lastToolResult.success
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                        : 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                    }`}
+                  >
+                    {lastToolResult.success ? 'Success' : 'Failed'}
+                  </span>
+                </div>
+
+                {lastToolResult.verification && (
+                  <div className="flex items-center gap-1.5 text-[11px] text-slate-300 font-mono">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>
+                      Verified ({lastToolResult.verification.method})
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              <div className="p-3 rounded-lg bg-slate-900 border border-nova-border font-mono text-xs text-slate-200">
+                {lastToolResult.output}
+              </div>
+            </div>
+          )}
+
+          {/* Tool Audit Log Strip */}
+          <div className="space-y-1.5 pt-1">
+            <span className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider">
+              Recent Tool Audit Trail:
+            </span>
+            <div className="max-h-36 overflow-y-auto rounded-lg bg-nova-dark/80 border border-nova-border text-xs divide-y divide-nova-border/50">
+              {auditEntries.length === 0 ? (
+                <div className="p-3 text-slate-500 italic">No tool calls recorded yet.</div>
+              ) : (
+                auditEntries.slice(0, 5).map((entry) => (
+                  <div key={entry.id} className="p-2.5 flex items-center justify-between text-[11px]">
+                    <div className="flex items-center gap-2.5">
+                      <span className="font-mono text-slate-400 text-[10px]">
+                        {new Date(entry.timestamp).toLocaleTimeString()}
+                      </span>
+                      <span className="font-semibold text-white">{entry.tool_name}</span>
+                      <span
+                        className={`px-1.5 py-0.5 rounded text-[9px] uppercase font-bold ${
+                          entry.status === 'SUCCESS'
+                            ? 'bg-emerald-500/20 text-emerald-300'
+                            : entry.status === 'BLOCKED'
+                            ? 'bg-rose-500/20 text-rose-300'
+                            : 'bg-amber-500/20 text-amber-300'
+                        }`}
+                      >
+                        {entry.status}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-3 text-slate-400 font-mono">
+                      <span>{entry.duration_ms}ms</span>
+                      <span className="text-emerald-400">{entry.verification_status}</span>
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </div>
@@ -563,7 +858,7 @@ export default function App(): React.JSX.Element {
                   : 'bg-nova-cyan hover:bg-cyan-400 text-slate-950 shadow-lg shadow-cyan-500/30'
               } disabled:opacity-50 disabled:cursor-not-allowed`}
             >
-              {isListening ? <Mic className="w-7 h-7" /> : <Mic className="w-7 h-7" />}
+              <Mic className="w-7 h-7" />
               {isListening && (
                 <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-rose-400 animate-ping" />
               )}
@@ -804,7 +1099,7 @@ export default function App(): React.JSX.Element {
 
       {/* Footer */}
       <footer className="px-6 py-2 bg-nova-panel border-t border-nova-border/70 flex items-center justify-between text-[11px] text-slate-400">
-        <div>NOVA • Gemini Build Specification • Phase 3 (Voice Engine Verified)</div>
+        <div>NOVA • Gemini Build Specification • Phase 4 (Safe Tools & Execution Active)</div>
         <div className="flex items-center space-x-4">
           <span>Backend: <code className="text-slate-300">127.0.0.1:8000</code></span>
           <span>Frontend: <code className="text-slate-300">127.0.0.1:5173</code></span>

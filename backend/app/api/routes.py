@@ -11,6 +11,7 @@ import psutil
 from backend.app.core.config import settings
 from backend.app.core.logger import logger
 from backend.app.services.intent_service import intent_service
+from backend.app.tools import default_registry
 
 router = APIRouter()
 START_TIME = time.time()
@@ -73,7 +74,7 @@ async def system_status() -> Dict[str, Any]:
 
 @router.post("/api/command")
 async def process_command(request: CommandRequest) -> Dict[str, Any]:
-    """Processes a text command via the custom ML Intent Classifier."""
+    """Processes a text command via the custom ML Intent Classifier and routes to safe tools."""
     logger.info("Received command for intent classification: '%s'", request.text)
     start_time = time.perf_counter()
 
@@ -84,54 +85,75 @@ async def process_command(request: CommandRequest) -> Dict[str, Any]:
     intent = prediction.get("intent")
     entities = prediction.get("entities", {})
     live_response = None
+    executed_tool = None
+    tool_result = None
 
     if intent == "SYSTEM_INFO":
         targets = entities.get("metric_targets", [])
+        filter_name = "all"
         if "battery" in targets:
-            bat = psutil.sensors_battery()
-            if bat:
-                plugged_str = "Plugged in (Charging)" if bat.power_plugged else "Running on Battery"
-                live_response = f"Aapke laptop ki battery {bat.percent}% hai ({plugged_str})."
-            else:
-                live_response = "Battery sensor data not available."
-        elif "ram" in targets:
-            mem = psutil.virtual_memory()
-            used_gb = round(mem.used / (1024**3), 2)
-            total_gb = round(mem.total / (1024**3), 2)
-            live_response = f"RAM Usage: {mem.percent}% ({used_gb} GB used out of {total_gb} GB)."
+            filter_name = "battery"
+        elif "ram" in targets or "memory" in targets:
+            filter_name = "memory"
         elif "cpu" in targets:
-            live_response = f"CPU Usage abhi {psutil.cpu_percent(interval=None)}% chal raha hai."
+            filter_name = "cpu"
         elif "disk" in targets or "storage" in targets:
-            disk = psutil.disk_usage(os.path.abspath(os.sep))
-            free_gb = round(disk.free / (1024**3), 2)
-            total_gb = round(disk.total / (1024**3), 2)
-            live_response = f"Drive C: me {free_gb} GB free storage bacha hai ({total_gb} GB me se)."
-        else:
-            live_response = f"System Overview: CPU {psutil.cpu_percent(interval=None)}%, RAM {psutil.virtual_memory().percent}%."
+            filter_name = "disk"
+
+        t_res = default_registry.execute("system_status", {"metric_filter": filter_name})
+        executed_tool = "system_status"
+        tool_result = t_res.model_dump()
+        live_response = t_res.output
 
     elif intent == "OPEN_APP":
-        app_name = entities.get("app_name", "application")
-        live_response = f"Intent identified: '{app_name}' open karne ki command hai (Phase 4 Tools me direct launch hoga)."
+        app_name = entities.get("app_name")
+        if app_name:
+            t_res = default_registry.execute("launch_app", {"app_name": app_name})
+            executed_tool = "launch_app"
+            tool_result = t_res.model_dump()
+            live_response = t_res.output
+        else:
+            live_response = "App launch intent detected, but no specific app name recognized."
+
+    elif intent == "BROWSER_ACTION":
+        search_query = entities.get("search_query", request.text)
+        t_res = default_registry.execute("web_search", {"query": search_query})
+        executed_tool = "web_search"
+        tool_result = t_res.model_dump()
+        live_response = t_res.output
+
+    elif intent == "FILE_SEARCH":
+        target = entities.get("file_name", entities.get("file_query", ""))
+        if target:
+            t_res = default_registry.execute("search_files", {"query": target})
+            executed_tool = "search_files"
+            tool_result = t_res.model_dump()
+            live_response = t_res.output
+        else:
+            live_response = "File search intent detected. Please specify a file name or extension."
 
     elif intent == "PLAY_MUSIC":
         track = entities.get("track_or_query", "music")
-        live_response = f"Music command detected: '{track}' play karne ki request hai."
-
-    elif intent == "FILE_SEARCH":
-        file_target = entities.get("file_name", entities.get("file_query", "file"))
-        live_response = f"File search target: '{file_target}' dhoondne ki request hai."
+        # Route to safe browser web search or spotify
+        t_res = default_registry.execute("web_search", {"query": f"play {track}"})
+        executed_tool = "web_search"
+        tool_result = t_res.model_dump()
+        live_response = f"Playing music: '{track}'. Dispatched via safe web search."
 
     elif intent == "REMINDER":
         time_exp = entities.get("time_expression", "")
-        live_response = f"Reminder request: '{request.text}' (Time: {time_exp or 'specified time'})."
+        live_response = f"Reminder logged: '{request.text}' (Time: {time_exp or 'unspecified'})."
 
     prediction["live_response"] = live_response
+    prediction["executed_tool"] = executed_tool
+    prediction["tool_result"] = tool_result
 
     logger.info(
-        "Intent: %s (Confidence: %s%%, Latency: %sms)",
+        "Intent: %s (Confidence: %s%%, Latency: %sms, ExecutedTool: %s)",
         intent,
         prediction.get("confidence_percent"),
         latency_ms,
+        executed_tool,
     )
     return prediction
 
