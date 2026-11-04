@@ -33,6 +33,7 @@ htmlcov/
 # Node.js / Electron / Vite build artifacts
 node_modules/
 dist/
+dist-electron/
 build/
 out/
 .vite/
