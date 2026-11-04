@@ -66,3 +66,8 @@ Thumbs.db
 desktop.ini
 .idea/
 .vscode/
+
+# Whisper downloaded models
+backend/models/whisper/
+models/whisper/
+_test_scratch*

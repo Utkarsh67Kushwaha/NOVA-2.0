@@ -78,6 +78,30 @@ async def process_command(request: CommandRequest) -> Dict[str, Any]:
     logger.info("Received command for intent classification: '%s'", request.text)
     start_time = time.perf_counter()
 
+    clean_text = request.text.lower().strip()
+
+    # Direct match for Screenshot / SC keywords
+    is_sc_query = any(k in clean_text for k in ["sc", "screenshot", "screen shot", "screen clip", "snipping", "snip"])
+    if is_sc_query and len(clean_text.split()) <= 4:
+        t_res = default_registry.execute("take_screenshot", {})
+        latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
+        return {
+            "query": request.text,
+            "intent": "OPEN_APP",
+            "raw_intent": "OPEN_APP",
+            "confidence": 0.95,
+            "confidence_percent": 95.0,
+            "threshold": 0.65,
+            "needs_clarification": False,
+            "entities": {"app_name": "screenshot"},
+            "model_name": intent_service.model_name if intent_service.is_ready() else "Rule Engine",
+            "top_probabilities": {"OPEN_APP": 0.95},
+            "latency_ms": latency_ms,
+            "live_response": t_res.output,
+            "executed_tool": "take_screenshot",
+            "tool_result": t_res.model_dump(),
+        }
+
     prediction = intent_service.predict(request.text)
     latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
     prediction["latency_ms"] = latency_ms
@@ -107,7 +131,12 @@ async def process_command(request: CommandRequest) -> Dict[str, Any]:
 
     elif intent == "OPEN_APP":
         app_name = entities.get("app_name")
-        if app_name:
+        if app_name in ("sc", "screenshot", "snippingtool"):
+            t_res = default_registry.execute("take_screenshot", {})
+            executed_tool = "take_screenshot"
+            tool_result = t_res.model_dump()
+            live_response = t_res.output
+        elif app_name:
             t_res = default_registry.execute("launch_app", {"app_name": app_name})
             executed_tool = "launch_app"
             tool_result = t_res.model_dump()
@@ -134,7 +163,6 @@ async def process_command(request: CommandRequest) -> Dict[str, Any]:
 
     elif intent == "PLAY_MUSIC":
         track = entities.get("track_or_query", "music")
-        # Route to safe browser web search or spotify
         t_res = default_registry.execute("web_search", {"query": f"play {track}"})
         executed_tool = "web_search"
         tool_result = t_res.model_dump()

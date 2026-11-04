@@ -25,6 +25,7 @@ import {
   AlertTriangle,
   XCircle,
   RotateCcw,
+  Camera,
 } from 'lucide-react';
 import {
   HealthData,
@@ -46,6 +47,8 @@ interface LogEntry {
 }
 
 const SAMPLE_COMMANDS = [
+  'sc le lo',
+  'take screenshot',
   'spotify kholo please',
   'battery kitne percent bachi hai',
   'play lofi beats for focus',
@@ -53,7 +56,6 @@ const SAMPLE_COMMANDS = [
   'remind me to drink water at 5pm',
   'summarize this uploaded pdf report',
   'is python function me bug dhoond kar fix karo',
-  'quantum mechanics photon entanglement',
 ];
 
 export default function App(): React.JSX.Element {
@@ -74,6 +76,7 @@ export default function App(): React.JSX.Element {
   // Phase 3: Voice Engine State
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus | null>(null);
   const [isListening, setIsListening] = useState<boolean>(false);
+  const [countdown, setCountdown] = useState<number>(0);
   const [voiceResult, setVoiceResult] = useState<VoiceListenResult | null>(null);
 
   // Phase 4: Safe Tools State
@@ -182,7 +185,7 @@ export default function App(): React.JSX.Element {
   // Execute Safe Tool
   const handleExecuteTool = async (toolName: string, args: Record<string, any> = {}) => {
     setIsExecutingTool(true);
-    addLog(`Executing safe tool '${toolName}' with arguments: ${JSON.stringify(args)}`, 'info');
+    addLog(`Executing safe tool '${toolName}'...`, 'info');
     try {
       const res = await fetch(`${BACKEND_URL}/api/tools/execute`, {
         method: 'POST',
@@ -249,18 +252,32 @@ export default function App(): React.JSX.Element {
     }
   };
 
-  // Phase 3: Voice Listen Once
+  // Phase 3: Voice Listen Once with live countdown timer
   const handleListenOnce = async () => {
     if (isListening) return;
     setIsListening(true);
-    addLog('Mic activated: Listening for 3.5s speech input...', 'info');
+    setCountdown(4);
+    addLog('Mic activated: Listening for speech input (4.5s window)...', 'info');
+
+    const timer = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
 
     try {
       const res = await fetch(`${BACKEND_URL}/api/voice/listen-once`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ duration_seconds: 3.5 }),
+        body: JSON.stringify({ duration_seconds: 4.5 }),
       });
+
+      clearInterval(timer);
+      setCountdown(0);
 
       if (res.ok) {
         const data: VoiceListenResult = await res.json();
@@ -278,8 +295,8 @@ export default function App(): React.JSX.Element {
           if (data.spoken_response) {
             addLog(`NOVA Spoke: "${data.spoken_response}"`, 'info');
           }
-        } else if (data.status === 'no_speech') {
-          addLog('No speech detected during recording window.', 'warn');
+        } else if (data.status === 'no_speech' || !data.transcript) {
+          addLog('Koi speech detect nahi hui. Kripya thoda paas aakar bolein.', 'warn');
         } else if (data.status === 'muted') {
           addLog('Microphone is currently muted.', 'warn');
         }
@@ -287,6 +304,8 @@ export default function App(): React.JSX.Element {
         addLog('Voice listen endpoint returned non-200 status.', 'error');
       }
     } catch (err) {
+      clearInterval(timer);
+      setCountdown(0);
       addLog(`Voice error: ${err}`, 'error');
     } finally {
       setIsListening(false);
@@ -342,7 +361,7 @@ export default function App(): React.JSX.Element {
     if (!text.trim()) return;
 
     setIsClassifying(true);
-    addLog(`Sending command to ML Intent Brain: "${text}"`, 'info');
+    addLog(`Sending command: "${text}"`, 'info');
 
     try {
       const res = await fetch(`${BACKEND_URL}/api/command`, {
@@ -357,7 +376,7 @@ export default function App(): React.JSX.Element {
 
         if (result.needs_clarification) {
           addLog(
-            `Unknown/Low-confidence command: "${text}" (Score: ${result.confidence_percent}% < ${result.threshold * 100}%). Clarification requested.`,
+            `Unknown/Low-confidence command: "${text}" (Score: ${result.confidence_percent}%). Clarification requested.`,
             'warn'
           );
         } else {
@@ -366,7 +385,7 @@ export default function App(): React.JSX.Element {
             'success'
           );
           if (result.executed_tool) {
-            addLog(`Automatically routed to safe tool: '${result.executed_tool}'`, 'info');
+            addLog(`Dispatched safe tool: '${result.executed_tool}'`, 'info');
           }
         }
         fetchAuditLog();
@@ -390,7 +409,7 @@ export default function App(): React.JSX.Element {
 
   const toggleAutoStartup = async () => {
     if (!window.novaAPI) {
-      addLog('Auto-startup toggle is only available when running in Electron desktop shell.', 'warn');
+      addLog('Auto-startup toggle is only available in Electron desktop shell.', 'warn');
       return;
     }
     const nextState = !autoStartup;
@@ -645,6 +664,15 @@ export default function App(): React.JSX.Element {
               </button>
 
               <button
+                onClick={() => handleExecuteTool('take_screenshot', {})}
+                disabled={isExecutingTool}
+                className="px-3 py-1.5 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 text-xs font-semibold text-cyan-300 border border-cyan-500/30 flex items-center gap-1.5 transition"
+              >
+                <Camera className="w-3.5 h-3.5 text-cyan-400" />
+                📸 Take Screenshot (SC)
+              </button>
+
+              <button
                 onClick={() => handleExecuteTool('system_status', { metric_filter: 'battery' })}
                 disabled={isExecutingTool}
                 className="px-3 py-1.5 rounded-lg bg-nova-card hover:bg-slate-700 text-xs font-semibold text-slate-200 border border-nova-border flex items-center gap-1.5 transition"
@@ -868,7 +896,7 @@ export default function App(): React.JSX.Element {
               <div className="flex items-center justify-between text-xs">
                 <span className="font-semibold text-white">
                   {isListening
-                    ? '🎙️ Listening for speech (Speak your command)...'
+                    ? `🎙️ Recording... Speak your command now! (${countdown > 0 ? countdown + 's' : 'Transcribing...'})`
                     : 'Click microphone or say "Hey NOVA" to give a voice command'}
                 </span>
                 <span className="font-mono text-slate-400">
@@ -880,18 +908,18 @@ export default function App(): React.JSX.Element {
               <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
                 <div
                   className={`h-full transition-all duration-150 ${
-                    isListening ? 'bg-gradient-to-r from-cyan-400 to-rose-400' : 'bg-cyan-500'
+                    isListening ? 'bg-gradient-to-r from-cyan-400 to-rose-400 animate-pulse' : 'bg-cyan-500'
                   }`}
-                  style={{ width: `${Math.min(100, (voiceStatus?.volume_level ?? 0) * 100)}%` }}
+                  style={{ width: `${Math.max(10, Math.min(100, (voiceStatus?.volume_level ?? 0) * 100))}%` }}
                 />
               </div>
 
               <div className="text-[11px] text-slate-400 flex items-center gap-3">
-                <span>Mic: Realtek Audio</span>
+                <span>Mic: Realtek Microphone Array</span>
                 <span>•</span>
                 <span>Speech Model: Faster-Whisper (Quantized int8)</span>
                 <span>•</span>
-                <span>VAD: Silero/Energy Filter Active</span>
+                <span>VAD: Sensitive Human Voice Threshold Active</span>
               </div>
             </div>
           </div>
@@ -903,7 +931,7 @@ export default function App(): React.JSX.Element {
                 <div className="flex items-center gap-2">
                   <span className="font-semibold text-slate-400">You Said:</span>
                   <span className="font-mono text-white text-sm">
-                    &quot;{voiceResult.transcript || 'No speech detected'}&quot;
+                    &quot;{voiceResult.transcript || 'Koi aawaz sunayi nahi di'}&quot;
                   </span>
                 </div>
                 {voiceResult.wake_word_detected && (
@@ -947,7 +975,7 @@ export default function App(): React.JSX.Element {
               value={commandInput}
               onChange={(e) => setCommandInput(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleClassifyCommand()}
-              placeholder="Type any desktop command in English or Hinglish (e.g. 'spotify kholo', 'find resume.pdf in downloads', 'ram kitna bacha hai')..."
+              placeholder="Type any desktop command in English or Hinglish (e.g. 'sc le lo', 'spotify kholo', 'battery kitne percent hai')..."
               className="flex-1 px-4 py-2.5 rounded-lg bg-nova-dark border border-nova-border focus:border-nova-cyan focus:outline-none text-sm text-white placeholder-slate-500 font-mono"
             />
             <button
@@ -1099,7 +1127,7 @@ export default function App(): React.JSX.Element {
 
       {/* Footer */}
       <footer className="px-6 py-2 bg-nova-panel border-t border-nova-border/70 flex items-center justify-between text-[11px] text-slate-400">
-        <div>NOVA • Gemini Build Specification • Phase 4 (Safe Tools & Execution Active)</div>
+        <div>NOVA • Gemini Build Specification • Phase 4 (Safe Tools & SC / Voice Engine Active)</div>
         <div className="flex items-center space-x-4">
           <span>Backend: <code className="text-slate-300">127.0.0.1:8000</code></span>
           <span>Frontend: <code className="text-slate-300">127.0.0.1:5173</code></span>

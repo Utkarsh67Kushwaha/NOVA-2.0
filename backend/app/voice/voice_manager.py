@@ -1,5 +1,6 @@
 from enum import Enum
 import logging
+import queue
 import threading
 import time
 from typing import Any, Dict, Optional
@@ -29,7 +30,7 @@ class VoiceAssistantManager:
 
     def __init__(self):
         self.state: VoiceState = VoiceState.IDLE
-        self.vad = VoiceActivityDetector(energy_threshold=0.015, silence_timeout_sec=1.2)
+        self.vad = VoiceActivityDetector(energy_threshold=0.002, silence_timeout_sec=1.4)
         self.last_transcript: str = ""
         self.last_response: Optional[Dict[str, Any]] = None
         self._lock = threading.Lock()
@@ -68,6 +69,13 @@ class VoiceAssistantManager:
             if not audio_capture.is_running:
                 audio_capture.start()
 
+            # Flush any stale chunks in queue
+            while not audio_capture.audio_queue.empty():
+                try:
+                    audio_capture.audio_queue.get_nowait()
+                except Exception:
+                    break
+
             collected_audio = []
             start_time = time.time()
             self.vad.reset()
@@ -92,13 +100,13 @@ class VoiceAssistantManager:
                 if not collected_audio:
                     self.state = VoiceState.IDLE
                     return {
-                        "error": "No audio captured from microphone.",
+                        "error": "Microphone se audio capture nahi ho saka.",
                         "status": "failed",
                     }
 
                 full_audio = np.concatenate(collected_audio)
 
-                # Step 1: Speech-to-Text Transcription
+                # Step 1: Speech-to-Text Transcription via Faster-Whisper
                 transcript = stt_service.transcribe(full_audio)
                 self.last_transcript = transcript
 
@@ -106,8 +114,8 @@ class VoiceAssistantManager:
                     self.state = VoiceState.IDLE
                     return {
                         "transcript": "",
-                        "status": "no_speech_detected",
-                        "message": "Kuch sunayi nahi diya, please dubara bolein.",
+                        "status": "no_speech",
+                        "message": "Koi speech detect nahi hui. Kripya microphone ke paas bolen.",
                     }
 
                 # Step 2: Wake Word Detection / Strip
@@ -150,4 +158,5 @@ class VoiceAssistantManager:
                 self.state = VoiceState.IDLE
 
 
+# Singleton instance
 voice_manager = VoiceAssistantManager()

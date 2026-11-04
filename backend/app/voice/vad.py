@@ -12,9 +12,9 @@ class VoiceActivityDetector:
 
     def __init__(
         self,
-        energy_threshold: float = 0.015,
+        energy_threshold: float = 0.002,
         silence_timeout_sec: float = 1.2,
-        min_speech_duration_sec: float = 0.5,
+        min_speech_duration_sec: float = 0.4,
     ):
         self.energy_threshold = energy_threshold
         self.silence_timeout_sec = silence_timeout_sec
@@ -34,8 +34,8 @@ class VoiceActivityDetector:
         zero_crossings = np.nonzero(np.diff(audio_chunk > 0))[0]
         zcr = len(zero_crossings) / max(1, len(audio_chunk))
 
-        # Human voice typically has moderate-to-high energy and specific ZCR range
-        return energy > self.energy_threshold and (0.02 < zcr < 0.45)
+        # Human voice typically has sensitive energy and specific ZCR range
+        return energy > self.energy_threshold and (0.01 < zcr < 0.65)
 
     def process_chunk(self, audio_chunk: np.ndarray) -> Optional[np.ndarray]:
         """Processes an incoming chunk. Returns complete speech array when silence finishes speaking."""

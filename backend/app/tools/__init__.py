@@ -9,7 +9,12 @@ from backend.app.tools.audit import audit_logger, AuditEntry
 from backend.app.tools.permissions import permissions_manager, PendingAction
 
 # Import tool classes
-from backend.app.tools.desktop_tools import LaunchAppTool, SystemStatusTool, ManageWindowTool
+from backend.app.tools.desktop_tools import (
+    LaunchAppTool,
+    SystemStatusTool,
+    ManageWindowTool,
+    TakeScreenshotTool,
+)
 from backend.app.tools.browser_tools import OpenUrlTool, WebSearchTool
 from backend.app.tools.file_tools import (
     ListFilesTool,
@@ -25,6 +30,7 @@ def setup_default_tools(registry: ToolRegistry = default_registry) -> ToolRegist
     registry.register(LaunchAppTool())
     registry.register(SystemStatusTool())
     registry.register(ManageWindowTool())
+    registry.register(TakeScreenshotTool())
 
     # Browser tools
     registry.register(OpenUrlTool())
@@ -54,4 +60,5 @@ __all__ = [
     "permissions_manager",
     "PendingAction",
     "setup_default_tools",
+    "TakeScreenshotTool",
 ]
