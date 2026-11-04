@@ -78,6 +78,8 @@ export default function App(): React.JSX.Element {
   const [isListening, setIsListening] = useState<boolean>(false);
   const [countdown, setCountdown] = useState<number>(0);
   const [voiceResult, setVoiceResult] = useState<VoiceListenResult | null>(null);
+  const [isTogglingHandsFree, setIsTogglingHandsFree] = useState<boolean>(false);
+  const lastEventTsRef = useRef<number>(0);
 
   // Phase 4: Safe Tools State
   const [toolsList, setToolsList] = useState<ToolDefinition[]>([]);
@@ -178,6 +180,35 @@ export default function App(): React.JSX.Element {
         if (voiceRes && voiceRes.ok) {
           const vData: VoiceStatus = await voiceRes.json();
           setVoiceStatus(vData);
+
+          // Real-time reaction to hands-free background wake word triggers
+          if (
+            vData.last_event &&
+            vData.last_event.timestamp &&
+            vData.last_event.timestamp > lastEventTsRef.current
+          ) {
+            lastEventTsRef.current = vData.last_event.timestamp;
+            setVoiceResult(vData.last_event);
+            if (vData.last_event.transcript) {
+              addLog(`🎙️ Wake Word Activated: "${vData.last_event.transcript}"`, 'success');
+            }
+            if (vData.last_event.prediction) {
+              setCommandResult(vData.last_event.prediction);
+              addLog(
+                `ML Intent Identified: ${vData.last_event.prediction.intent} (${vData.last_event.prediction.confidence_percent}%)`,
+                'info'
+              );
+              const redirectUrl =
+                vData.last_event.prediction.tool_result?.data?.url ||
+                vData.last_event.prediction.tool_result?.data?.search_url;
+              if (redirectUrl) {
+                openExternalUrl(redirectUrl);
+              }
+            }
+            if (vData.last_event.spoken_response) {
+              addLog(`NOVA Spoke: "${vData.last_event.spoken_response}"`, 'info');
+            }
+          }
         }
       } else {
         setIsBackendConnected(false);
@@ -374,6 +405,26 @@ export default function App(): React.JSX.Element {
       }
     } catch (err) {
       addLog(`Toggle mute failed: ${err}`, 'error');
+    }
+  };
+
+  // Toggle Continuous Hands-Free Wake Word Mode
+  const handleToggleHandsFree = async () => {
+    setIsTogglingHandsFree(true);
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/voice/hands-free/toggle`, { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        setVoiceStatus((prev) => (prev ? { ...prev, hands_free_active: data.hands_free_active } : null));
+        addLog(
+          `Hands-Free 'Hey NOVA' wake-word mode ${data.hands_free_active ? 'ACTIVATED' : 'DEACTIVATED'}`,
+          data.hands_free_active ? 'success' : 'warn'
+        );
+      }
+    } catch (err) {
+      addLog(`Failed to toggle hands-free mode: ${err}`, 'error');
+    } finally {
+      setIsTogglingHandsFree(false);
     }
   };
 
@@ -892,6 +943,20 @@ export default function App(): React.JSX.Element {
               </button>
 
               <button
+                onClick={handleToggleHandsFree}
+                disabled={isTogglingHandsFree}
+                title="Continuous background wake-word activation (Hey NOVA)"
+                className={`px-3 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 transition ${
+                  voiceStatus?.hands_free_active
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30 shadow-lg shadow-emerald-500/10'
+                    : 'bg-nova-card hover:bg-slate-700 text-slate-400 border-nova-border hover:text-slate-200'
+                }`}
+              >
+                <Radio className={`w-3.5 h-3.5 ${voiceStatus?.hands_free_active ? 'animate-pulse text-emerald-400' : ''}`} />
+                <span>Hands-Free {voiceStatus?.hands_free_active ? 'ON' : 'OFF'}</span>
+              </button>
+
+              <button
                 onClick={handleInterrupt}
                 title="Stop / Interrupt Voice"
                 className="px-3 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 text-xs font-semibold flex items-center gap-1.5 transition"
@@ -942,7 +1007,13 @@ export default function App(): React.JSX.Element {
               </div>
 
               <div className="text-[11px] text-slate-400 flex items-center gap-3">
-                <span>Mic: Realtek Microphone Array</span>
+                {voiceStatus?.hands_free_active ? (
+                  <span className="text-emerald-400 font-medium flex items-center gap-1 animate-pulse">
+                    🟢 Hands-Free Wake Word Active: Say &quot;Hey NOVA&quot; anytime
+                  </span>
+                ) : (
+                  <span>Wake phrase: &quot;Hey NOVA&quot; (Click Hands-Free to listen continuously)</span>
+                )}
                 <span>•</span>
                 <span>Speech Model: Faster-Whisper (Quantized int8)</span>
                 <span>•</span>

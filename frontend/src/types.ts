@@ -58,6 +58,8 @@ export interface VoiceStatus {
   is_audio_running: boolean;
   last_transcript: string;
   volume_level: number;
+  hands_free_active?: boolean;
+  last_event?: any;
 }
 
 export interface VoiceListenResult {

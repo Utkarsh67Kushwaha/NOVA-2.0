@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any, Dict, List
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
@@ -16,7 +16,7 @@ class SpeakRequest(BaseModel):
 
 @router.get("/status")
 async def get_voice_status() -> Dict[str, Any]:
-    """Returns real-time voice subsystem state and mic volume."""
+    """Returns real-time voice subsystem state, hands-free mode, and mic volume."""
     return voice_manager.get_status()
 
 
@@ -24,6 +24,37 @@ async def get_voice_status() -> Dict[str, Any]:
 async def listen_once() -> Dict[str, Any]:
     """Records user voice from microphone, runs VAD, STT, intent classification, and speaks response."""
     return voice_manager.record_and_process_once(max_duration_sec=6.0)
+
+
+@router.post("/hands-free/start")
+async def start_hands_free() -> Dict[str, Any]:
+    """Starts continuous background 'Hey NOVA' wake-word listening loop."""
+    active = voice_manager.start_hands_free()
+    return {"status": "ok", "hands_free_active": active}
+
+
+@router.post("/hands-free/stop")
+async def stop_hands_free() -> Dict[str, Any]:
+    """Stops continuous background 'Hey NOVA' wake-word listening loop."""
+    active = voice_manager.stop_hands_free()
+    return {"status": "ok", "hands_free_active": active}
+
+
+@router.post("/hands-free/toggle")
+async def toggle_hands_free() -> Dict[str, Any]:
+    """Toggles continuous background 'Hey NOVA' wake-word listening loop."""
+    active = voice_manager.toggle_hands_free()
+    return {"status": "ok", "hands_free_active": active}
+
+
+@router.get("/events")
+async def get_voice_events() -> Dict[str, Any]:
+    """Returns recent voice detection events and the latest trigger."""
+    return {
+        "status": "ok",
+        "latest": voice_manager.last_event,
+        "events": voice_manager.event_history[-20:],
+    }
 
 
 @router.post("/speak")

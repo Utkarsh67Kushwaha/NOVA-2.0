@@ -5,6 +5,7 @@ from starlette.testclient import TestClient
 from backend.app.main import app
 from backend.app.voice.tts import tts_service
 from backend.app.voice.vad import VoiceActivityDetector
+from backend.app.voice.voice_manager import voice_manager
 from backend.app.voice.wake_word import wake_word_detector
 
 
@@ -39,6 +40,7 @@ def test_vad_speech_detection():
         ("nova battery kitne percent hai", True, "battery kitne percent hai"),
         ("hello nova play music", True, "play music"),
         ("ok nova find resume in downloads", True, "find resume in downloads"),
+        ("hey noah take screenshot", True, "take screenshot"),
         ("open chrome browser please", False, "open chrome browser please"),
         ("play arijit singh songs", False, "play arijit singh songs"),
     ],
@@ -58,13 +60,14 @@ def test_tts_service_non_blocking():
 
 
 def test_voice_status_endpoint(client):
-    """Verify GET /api/voice/status returns valid state."""
+    """Verify GET /api/voice/status returns valid state including hands-free."""
     response = client.get("/api/voice/status")
     assert response.status_code == 200
     data = response.json()
     assert "state" in data
     assert "is_muted" in data
     assert "volume_level" in data
+    assert "hands_free_active" in data
 
 
 def test_voice_interrupt_endpoint(client):
@@ -88,3 +91,31 @@ def test_voice_toggle_mute_endpoint(client):
     assert response2.status_code == 200
     data2 = response2.json()
     assert data2["is_muted"] != data["is_muted"]
+
+
+def test_hands_free_endpoints(client):
+    """Verify Hands-Free wake-word start, toggle, stop and events endpoints."""
+    # Start
+    res_start = client.post("/api/voice/hands-free/start")
+    assert res_start.status_code == 200
+    assert res_start.json()["hands_free_active"] is True
+    assert voice_manager.is_hands_free is True
+
+    # Check status
+    res_status = client.get("/api/voice/status")
+    assert res_status.json()["hands_free_active"] is True
+
+    # Events endpoint
+    res_events = client.get("/api/voice/events")
+    assert res_events.status_code == 200
+    assert "events" in res_events.json()
+
+    # Toggle to stop
+    res_toggle = client.post("/api/voice/hands-free/toggle")
+    assert res_toggle.status_code == 200
+    assert res_toggle.json()["hands_free_active"] is False
+
+    # Stop explicitly
+    res_stop = client.post("/api/voice/hands-free/stop")
+    assert res_stop.status_code == 200
+    assert res_stop.json()["hands_free_active"] is False

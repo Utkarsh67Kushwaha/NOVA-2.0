@@ -5,7 +5,8 @@ from typing import Optional, Tuple
 logger = logging.getLogger("nova.voice.wake_word")
 
 WAKE_PATTERNS = [
-    r"^(?:hey\s+|ok\s+|hello\s+|hi\s+|are\s+you\s+there\s+)?nova\b",
+    r"^(?:hey\s+|ok\s+|hello\s+|hi\s+|are\s+you\s+there\s+)?(?:nova|noah|noba|knower)\b",
+    r"\b(?:hey\s+nova|ok\s+nova|hello\s+nova|hi\s+nova)\b",
     r"\bnova\b",
 ]
 
