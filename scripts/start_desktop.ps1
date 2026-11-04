@@ -10,19 +10,15 @@ Write-Host "========================================" -ForegroundColor Cyan
 # 1. Start backend process
 $pythonExe = Join-Path $rootDir ".venv\Scripts\python.exe"
 Write-Host "[1/3] Starting Backend API Server..." -ForegroundColor Yellow
-$backendJob = Start-Job -ScriptBlock {
-    param($root, $py)
-    Set-Location $root
-    & $py -m backend.app.main
-} -ArgumentList $rootDir, $pythonExe
+$backendProcess = Start-Process -FilePath $pythonExe -ArgumentList "-m", "backend.app.main" -PassThru -WindowStyle Hidden
 
 # 2. Wait for backend health probe
 Write-Host "[2/3] Waiting for Backend Health probe on http://127.0.0.1:8000/health..." -ForegroundColor Yellow
-$retries = 20
+$retries = 25
 $backendReady = $false
 
 for ($i = 0; $i -lt $retries; $i++) {
-    Start-Sleep -Milliseconds 500
+    Start-Sleep -Milliseconds 400
     try {
         $res = Invoke-RestMethod -Uri "http://127.0.0.1:8000/health" -Method Get -TimeoutSec 2 -ErrorAction Stop
         if ($res.status -eq "healthy") {
@@ -36,10 +32,8 @@ for ($i = 0; $i -lt $retries; $i++) {
 }
 
 if (-not $backendReady) {
-    Write-Host "[ERROR] Backend failed to start. Job output:" -ForegroundColor Red
-    Receive-Job $backendJob
-    Stop-Job $backendJob
-    Remove-Job $backendJob
+    Write-Host "[ERROR] Backend failed to start on port 8000." -ForegroundColor Red
+    Stop-Process -Id $backendProcess.Id -Force -ErrorAction SilentlyContinue
     exit 1
 }
 
@@ -50,7 +44,6 @@ Set-Location (Join-Path $rootDir "frontend")
 try {
     npm run dev
 } finally {
-    Write-Host "Stopping background backend job..." -ForegroundColor Cyan
-    Stop-Job $backendJob
-    Remove-Job $backendJob
+    Write-Host "Stopping background backend process..." -ForegroundColor Cyan
+    Stop-Process -Id $backendProcess.Id -Force -ErrorAction SilentlyContinue
 }
