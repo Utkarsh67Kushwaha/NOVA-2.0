@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage } from 'electron';
+import { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, globalShortcut } from 'electron';
 import * as path from 'path';
 
 let mainWindow: BrowserWindow | null = null;
@@ -76,12 +76,13 @@ function setupTray() {
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
-    width: 1080,
-    height: 740,
+    width: 1100,
+    height: 760,
     minWidth: 840,
     minHeight: 560,
     backgroundColor: '#080c14',
     title: 'NOVA Desktop Assistant',
+    show: false, // Show gracefully when ready
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -90,7 +91,12 @@ function createWindow(): void {
     },
   });
 
-  // Minimize to tray on close unless quitting
+  mainWindow.once('ready-to-show', () => {
+    mainWindow?.show();
+    mainWindow?.focus();
+  });
+
+  // Minimize to tray on close unless explicitly quitting
   mainWindow.on('close', (event) => {
     if (!isQuitting) {
       event.preventDefault();
@@ -98,14 +104,20 @@ function createWindow(): void {
     }
   });
 
-  const isDev = process.env.NODE_ENV !== 'production' && !app.isPackaged;
+  const devServerUrl = process.env.VITE_DEV_SERVER_URL;
+  const distHtmlPath = path.join(__dirname, '../dist/index.html');
 
-  if (isDev) {
-    mainWindow.loadURL('http://localhost:5173');
-    // Open DevTools in dev mode
-    mainWindow.webContents.openDevTools({ mode: 'detach' });
+  if (devServerUrl) {
+    mainWindow.loadURL(devServerUrl).catch(() => {
+      mainWindow?.loadFile(distHtmlPath);
+    });
   } else {
-    mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+    mainWindow.loadFile(distHtmlPath);
+  }
+
+  // Open DevTools only if explicitly requested
+  if (process.env.OPEN_DEVTOOLS === 'true') {
+    mainWindow.webContents.openDevTools({ mode: 'detach' });
   }
 }
 
@@ -154,6 +166,13 @@ if (!gotSingleInstanceLock) {
     createWindow();
     setupTray();
 
+    // Toggle DevTools with F12
+    globalShortcut.register('F12', () => {
+      if (mainWindow) {
+        mainWindow.webContents.toggleDevTools();
+      }
+    });
+
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) {
         createWindow();
@@ -161,6 +180,10 @@ if (!gotSingleInstanceLock) {
         mainWindow.show();
       }
     });
+  });
+
+  app.on('will-quit', () => {
+    globalShortcut.unregisterAll();
   });
 
   app.on('before-quit', () => {
