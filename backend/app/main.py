@@ -1,0 +1,56 @@
+from contextlib import asynccontextmanager
+from typing import AsyncGenerator
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+import uvicorn
+
+from backend.app.api.routes import router
+from backend.app.core.config import settings
+from backend.app.core.logger import logger
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    """Lifespan event handler for controlled startup and shutdown."""
+    logger.info("Initializing %s v%s in %s mode...", settings.APP_NAME, settings.VERSION, settings.NOVA_ENV)
+    yield
+    logger.info("Shutting down %s cleanly.", settings.APP_NAME)
+
+
+def create_app() -> FastAPI:
+    """Application factory for FastAPI backend."""
+    app = FastAPI(
+        title=settings.APP_NAME,
+        version=settings.VERSION,
+        lifespan=lifespan,
+    )
+
+    # CORS middleware for local frontend communication
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.CORS_ORIGINS,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    app.include_router(router)
+    return app
+
+
+app = create_app()
+
+
+def start() -> None:
+    """Server entrypoint."""
+    uvicorn.run(
+        "backend.app.main:app",
+        host=settings.NOVA_HOST,
+        port=settings.NOVA_PORT,
+        reload=(settings.NOVA_ENV == "development"),
+        log_level=settings.LOG_LEVEL.lower(),
+    )
+
+
+if __name__ == "__main__":
+    start()
