@@ -1,0 +1,153 @@
+from enum import Enum
+import logging
+import threading
+import time
+from typing import Any, Dict, Optional
+
+import numpy as np
+
+from backend.app.services.intent_service import intent_service
+from backend.app.voice.audio_capture import audio_capture
+from backend.app.voice.stt import stt_service
+from backend.app.voice.tts import tts_service
+from backend.app.voice.vad import VoiceActivityDetector
+from backend.app.voice.wake_word import wake_word_detector
+
+logger = logging.getLogger("nova.voice.manager")
+
+
+class VoiceState(str, Enum):
+    IDLE = "IDLE"
+    LISTENING = "LISTENING"
+    PROCESSING = "PROCESSING"
+    SPEAKING = "SPEAKING"
+    MUTED = "MUTED"
+
+
+class VoiceAssistantManager:
+    """Orchestrates audio capture, VAD, wake phrase detection, STT, intent classification, and TTS."""
+
+    def __init__(self):
+        self.state: VoiceState = VoiceState.IDLE
+        self.vad = VoiceActivityDetector(energy_threshold=0.015, silence_timeout_sec=1.2)
+        self.last_transcript: str = ""
+        self.last_response: Optional[Dict[str, Any]] = None
+        self._lock = threading.Lock()
+
+    def get_status(self) -> Dict[str, Any]:
+        """Returns current state and subsystem status."""
+        return {
+            "state": self.state.value,
+            "is_muted": audio_capture.is_muted,
+            "is_audio_running": audio_capture.is_running,
+            "last_transcript": self.last_transcript,
+            "volume_level": audio_capture.current_rms,
+        }
+
+    def interrupt(self) -> None:
+        """Interrupts ongoing speech or processing."""
+        tts_service.stop()
+        self.vad.reset()
+        self.state = VoiceState.IDLE
+        logger.info("Voice Assistant interrupted.")
+
+    def toggle_mute(self) -> bool:
+        """Toggles microphone mute."""
+        muted = audio_capture.toggle_mute()
+        self.state = VoiceState.MUTED if muted else VoiceState.IDLE
+        if muted:
+            tts_service.stop()
+        return muted
+
+    def record_and_process_once(self, max_duration_sec: float = 6.0) -> Dict[str, Any]:
+        """Records a single voice command from mic, transcribes, classifies, speaks result, and returns data."""
+        with self._lock:
+            self.state = VoiceState.LISTENING
+            logger.info("Listening for voice command (Max duration: %.1fs)...", max_duration_sec)
+
+            if not audio_capture.is_running:
+                audio_capture.start()
+
+            collected_audio = []
+            start_time = time.time()
+            self.vad.reset()
+
+            try:
+                # Capture loop
+                while time.time() - start_time < max_duration_sec:
+                    try:
+                        chunk = audio_capture.audio_queue.get(timeout=0.1)
+                        speech_result = self.vad.process_chunk(chunk)
+                        collected_audio.append(chunk)
+
+                        # If VAD detected complete utterance followed by silence
+                        if speech_result is not None:
+                            logger.info("VAD detected end of speech command.")
+                            break
+                    except Exception:
+                        continue
+
+                self.state = VoiceState.PROCESSING
+
+                if not collected_audio:
+                    self.state = VoiceState.IDLE
+                    return {
+                        "error": "No audio captured from microphone.",
+                        "status": "failed",
+                    }
+
+                full_audio = np.concatenate(collected_audio)
+
+                # Step 1: Speech-to-Text Transcription
+                transcript = stt_service.transcribe(full_audio)
+                self.last_transcript = transcript
+
+                if not transcript or not transcript.strip():
+                    self.state = VoiceState.IDLE
+                    return {
+                        "transcript": "",
+                        "status": "no_speech_detected",
+                        "message": "Kuch sunayi nahi diya, please dubara bolein.",
+                    }
+
+                # Step 2: Wake Word Detection / Strip
+                is_wake, clean_command = wake_word_detector.detect_and_strip(transcript)
+                command_to_classify = clean_command if clean_command else transcript
+
+                # Step 3: Intent Classification
+                prediction = intent_service.predict(command_to_classify)
+                self.last_response = prediction
+
+                # Step 4: Text-to-Speech Response
+                response_text = ""
+                if prediction.get("needs_clarification"):
+                    response_text = prediction.get(
+                        "clarification_message",
+                        "Mujhe theek se samajh nahi aaya, kripya dobara bolein.",
+                    )
+                else:
+                    live_resp = prediction.get("live_response")
+                    if live_resp:
+                        response_text = live_resp
+                    else:
+                        intent_name = prediction.get("intent")
+                        response_text = f"Theek hai, {intent_name} command samajh gaya."
+
+                self.state = VoiceState.SPEAKING
+                tts_service.speak(response_text, blocking=False)
+                self.state = VoiceState.IDLE
+
+                return {
+                    "transcript": transcript,
+                    "clean_command": command_to_classify,
+                    "wake_word_detected": is_wake,
+                    "prediction": prediction,
+                    "spoken_response": response_text,
+                    "status": "success",
+                }
+
+            finally:
+                self.state = VoiceState.IDLE
+
+
+voice_manager = VoiceAssistantManager()

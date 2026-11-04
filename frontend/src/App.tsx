@@ -17,8 +17,13 @@ import {
   HelpCircle,
   Clock,
   Layers,
+  Mic,
+  MicOff,
+  Volume2,
+  Square,
+  AudioWaveform as Waveform,
 } from 'lucide-react';
-import { HealthData, SystemStatusData, CommandResult } from './types';
+import { HealthData, SystemStatusData, CommandResult, VoiceStatus, VoiceListenResult } from './types';
 
 const BACKEND_URL = 'http://127.0.0.1:8000';
 
@@ -30,9 +35,9 @@ interface LogEntry {
 
 const SAMPLE_COMMANDS = [
   'spotify kholo please',
+  'battery kitne percent bachi hai',
   'play lofi beats for focus',
   'downloads me resume.pdf dhoondo',
-  'battery kitne percent bachi hai',
   'remind me to drink water at 5pm',
   'summarize this uploaded pdf report',
   'is python function me bug dhoond kar fix karo',
@@ -48,9 +53,16 @@ export default function App(): React.JSX.Element {
   const [isElectron, setIsElectron] = useState<boolean>(false);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+
+  // Phase 2: ML Command State
   const [commandInput, setCommandInput] = useState<string>('');
   const [isClassifying, setIsClassifying] = useState<boolean>(false);
   const [commandResult, setCommandResult] = useState<CommandResult | null>(null);
+
+  // Phase 3: Voice Engine State
+  const [voiceStatus, setVoiceStatus] = useState<VoiceStatus | null>(null);
+  const [isListening, setIsListening] = useState<boolean>(false);
+  const [voiceResult, setVoiceResult] = useState<VoiceListenResult | null>(null);
 
   const logContainerRef = useRef<HTMLDivElement>(null);
 
@@ -74,13 +86,14 @@ export default function App(): React.JSX.Element {
     }
   }, [addLog]);
 
-  // Poll Backend Health & System Status
+  // Poll Backend Health, System Status & Voice Status
   const checkBackend = useCallback(async () => {
     const startTime = performance.now();
     try {
-      const [healthRes, statusRes] = await Promise.all([
+      const [healthRes, statusRes, voiceRes] = await Promise.all([
         fetch(`${BACKEND_URL}/health`),
         fetch(`${BACKEND_URL}/api/status`),
+        fetch(`${BACKEND_URL}/api/voice/status`).catch(() => null),
       ]);
 
       const roundTrip = Math.round(performance.now() - startTime);
@@ -91,6 +104,11 @@ export default function App(): React.JSX.Element {
         const statusJson: SystemStatusData = await statusRes.json();
         setHealth(healthJson);
         setSystemStatus(statusJson);
+
+        if (voiceRes && voiceRes.ok) {
+          const voiceJson: VoiceStatus = await voiceRes.json();
+          setVoiceStatus(voiceJson);
+        }
 
         if (!isBackendConnected) {
           setIsBackendConnected(true);
@@ -206,6 +224,79 @@ export default function App(): React.JSX.Element {
     }
   };
 
+  // Phase 3: Voice Engine Handlers
+  const handleListenOnce = async () => {
+    if (isListening) return;
+
+    setIsListening(true);
+    addLog('Voice Engine: Listening to microphone input (Speak now)...', 'info');
+
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/voice/listen-once`, { method: 'POST' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+
+      const result: VoiceListenResult = await res.json();
+      setVoiceResult(result);
+
+      if (result.status === 'success') {
+        addLog(`Voice Transcribed: "${result.transcript}"`, 'success');
+        if (result.prediction) {
+          setCommandResult(result.prediction);
+        }
+        if (result.spoken_response) {
+          addLog(`NOVA Spoke: "${result.spoken_response}"`, 'success');
+        }
+      } else {
+        addLog(`Voice Engine: ${result.message ?? result.error ?? 'No speech detected.'}`, 'warn');
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      addLog(`Voice capture error: ${msg}`, 'error');
+    } finally {
+      setIsListening(false);
+      checkBackend();
+    }
+  };
+
+  const handleTestTTS = async () => {
+    addLog('Testing local TTS voice output...', 'info');
+    try {
+      await fetch(`${BACKEND_URL}/api/voice/speak`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: 'Hello! I am NOVA, your desktop AI assistant. Voice engine is fully operational.',
+        }),
+      });
+      addLog('TTS voice synthesized successfully.', 'success');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      addLog(`TTS test error: ${msg}`, 'error');
+    }
+  };
+
+  const handleInterrupt = async () => {
+    addLog('Interrupt signal sent to Voice Engine.', 'warn');
+    try {
+      await fetch(`${BACKEND_URL}/api/voice/interrupt`, { method: 'POST' });
+      setIsListening(false);
+      checkBackend();
+    } catch (err) {
+      addLog(`Failed to interrupt: ${err}`, 'error');
+    }
+  };
+
+  const handleToggleMute = async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/voice/toggle-mute`, { method: 'POST' });
+      const data = await res.json();
+      addLog(`Microphone ${data.is_muted ? 'MUTED' : 'UNMUTED'}`, data.is_muted ? 'warn' : 'info');
+      checkBackend();
+    } catch (err) {
+      addLog(`Failed to toggle mute: ${err}`, 'error');
+    }
+  };
+
   return (
     <div className="flex flex-col h-screen w-screen bg-nova-dark text-slate-100 overflow-hidden select-none">
       {/* Top Navigation Bar */}
@@ -217,11 +308,11 @@ export default function App(): React.JSX.Element {
           <div>
             <h1 className="text-base font-bold tracking-wider uppercase text-white flex items-center gap-2">
               NOVA{' '}
-              <span className="text-xs px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
-                Phase 2: ML Brain
+              <span className="text-xs px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/30">
+                Phase 3: Voice Engine
               </span>
             </h1>
-            <p className="text-[11px] text-slate-400">Desktop AI Assistant • Local ML Intent Classifier</p>
+            <p className="text-[11px] text-slate-400">Desktop AI Assistant • Faster-Whisper & Neural TTS Active</p>
           </div>
         </div>
 
@@ -412,6 +503,134 @@ export default function App(): React.JSX.Element {
           </div>
         </div>
 
+        {/* Phase 3: Voice Engine & Interaction Module */}
+        <div className="rounded-xl bg-gradient-to-r from-slate-900 to-nova-panel border border-cyan-500/30 shadow-xl p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 rounded-lg bg-cyan-500/10 border border-cyan-500/30">
+                <Waveform className="w-5 h-5 text-nova-cyan animate-pulse" />
+              </div>
+              <div>
+                <h2 className="text-sm font-bold uppercase tracking-wider text-white flex items-center gap-2">
+                  Voice Engine • Local Wake Word & Faster-Whisper
+                </h2>
+                <p className="text-[11px] text-slate-400">
+                  Wake phrase: &quot;Hey NOVA&quot; • Local Speech Synthesis (SAPI5)
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleToggleMute}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 border transition ${
+                  voiceStatus?.is_muted
+                    ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                    : 'bg-nova-card hover:bg-slate-700 text-slate-300 border-nova-border'
+                }`}
+              >
+                {voiceStatus?.is_muted ? <MicOff className="w-3.5 h-3.5 text-rose-400" /> : <Mic className="w-3.5 h-3.5 text-nova-cyan" />}
+                {voiceStatus?.is_muted ? 'Muted' : 'Mic Active'}
+              </button>
+
+              <button
+                onClick={handleTestTTS}
+                className="px-3 py-1.5 rounded-lg bg-nova-card hover:bg-slate-700 text-slate-300 border border-nova-border text-xs font-semibold flex items-center gap-1.5 transition"
+              >
+                <Volume2 className="w-3.5 h-3.5 text-purple-400" />
+                Test Voice
+              </button>
+
+              <button
+                onClick={handleInterrupt}
+                title="Stop / Interrupt Voice"
+                className="px-3 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 text-xs font-semibold flex items-center gap-1.5 transition"
+              >
+                <Square className="w-3.5 h-3.5" />
+                Interrupt
+              </button>
+            </div>
+          </div>
+
+          {/* Voice Action Hero Bar */}
+          <div className="flex flex-col sm:flex-row items-center gap-4 p-4 rounded-xl bg-nova-dark/90 border border-nova-border">
+            <button
+              onClick={handleListenOnce}
+              disabled={isListening || voiceStatus?.is_muted}
+              className={`relative flex items-center justify-center w-16 h-16 rounded-full transition-all duration-300 ${
+                isListening
+                  ? 'bg-rose-500 text-white animate-pulse shadow-lg shadow-rose-500/50'
+                  : 'bg-nova-cyan hover:bg-cyan-400 text-slate-950 shadow-lg shadow-cyan-500/30'
+              } disabled:opacity-50 disabled:cursor-not-allowed`}
+            >
+              {isListening ? <Mic className="w-7 h-7" /> : <Mic className="w-7 h-7" />}
+              {isListening && (
+                <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-rose-400 animate-ping" />
+              )}
+            </button>
+
+            <div className="flex-1 space-y-1.5 w-full">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-semibold text-white">
+                  {isListening
+                    ? '🎙️ Listening for speech (Speak your command)...'
+                    : 'Click microphone or say "Hey NOVA" to give a voice command'}
+                </span>
+                <span className="font-mono text-slate-400">
+                  State: <strong className="text-nova-cyan">{isListening ? 'LISTENING' : voiceStatus?.state ?? 'IDLE'}</strong>
+                </span>
+              </div>
+
+              {/* Volume / Audio Waveform Meter */}
+              <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
+                <div
+                  className={`h-full transition-all duration-150 ${
+                    isListening ? 'bg-gradient-to-r from-cyan-400 to-rose-400' : 'bg-cyan-500'
+                  }`}
+                  style={{ width: `${Math.min(100, (voiceStatus?.volume_level ?? 0) * 100)}%` }}
+                />
+              </div>
+
+              <div className="text-[11px] text-slate-400 flex items-center gap-3">
+                <span>Mic: Realtek Audio</span>
+                <span>•</span>
+                <span>Speech Model: Faster-Whisper (Quantized int8)</span>
+                <span>•</span>
+                <span>VAD: Silero/Energy Filter Active</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Voice Response Output Card */}
+          {voiceResult && (
+            <div className="p-4 rounded-lg bg-nova-dark/95 border border-cyan-500/30 space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-slate-400">You Said:</span>
+                  <span className="font-mono text-white text-sm">
+                    &quot;{voiceResult.transcript || 'No speech detected'}&quot;
+                  </span>
+                </div>
+                {voiceResult.wake_word_detected && (
+                  <span className="px-2 py-0.5 rounded bg-cyan-500/20 text-nova-cyan border border-cyan-500/40 text-[10px] font-bold uppercase tracking-wider">
+                    Wake Word Detected
+                  </span>
+                )}
+              </div>
+
+              {voiceResult.spoken_response && (
+                <div className="p-3 rounded-lg bg-cyan-500/10 border border-cyan-500/30 text-xs text-cyan-200 flex items-center gap-2">
+                  <Volume2 className="w-4 h-4 text-nova-cyan shrink-0" />
+                  <div>
+                    <strong className="text-white">NOVA: </strong>
+                    <span>{voiceResult.spoken_response}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
         {/* Phase 2: Live ML Intent Classifier Testing Module */}
         <div className="rounded-xl bg-nova-panel border border-nova-border shadow-lg p-5 space-y-4">
           <div className="flex items-center justify-between">
@@ -585,7 +804,7 @@ export default function App(): React.JSX.Element {
 
       {/* Footer */}
       <footer className="px-6 py-2 bg-nova-panel border-t border-nova-border/70 flex items-center justify-between text-[11px] text-slate-400">
-        <div>NOVA • Gemini Build Specification • Phase 2 (ML Brain Verified)</div>
+        <div>NOVA • Gemini Build Specification • Phase 3 (Voice Engine Verified)</div>
         <div className="flex items-center space-x-4">
           <span>Backend: <code className="text-slate-300">127.0.0.1:8000</code></span>
           <span>Frontend: <code className="text-slate-300">127.0.0.1:5173</code></span>

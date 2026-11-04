@@ -50,6 +50,25 @@ export interface CommandResult {
   top_probabilities: Record<string, number>;
 }
 
+export interface VoiceStatus {
+  state: 'IDLE' | 'LISTENING' | 'PROCESSING' | 'SPEAKING' | 'MUTED';
+  is_muted: boolean;
+  is_audio_running: boolean;
+  last_transcript: string;
+  volume_level: number;
+}
+
+export interface VoiceListenResult {
+  transcript?: string;
+  clean_command?: string;
+  wake_word_detected?: boolean;
+  prediction?: CommandResult;
+  spoken_response?: string;
+  status: string;
+  error?: string;
+  message?: string;
+}
+
 export interface NovaIPCBridge {
   ping: () => Promise<string>;
   getLoginItemSettings: () => Promise<boolean>;
