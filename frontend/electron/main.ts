@@ -76,13 +76,15 @@ function setupTray() {
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
-    width: 1100,
+    width: 1120,
     height: 760,
     minWidth: 840,
     minHeight: 560,
     backgroundColor: '#080c14',
     title: 'NOVA Desktop Assistant',
-    show: false, // Show gracefully when ready
+    show: true,
+    center: true,
+    autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -91,10 +93,8 @@ function createWindow(): void {
     },
   });
 
-  mainWindow.once('ready-to-show', () => {
-    mainWindow?.show();
-    mainWindow?.focus();
-  });
+  mainWindow.show();
+  mainWindow.focus();
 
   // Minimize to tray on close unless explicitly quitting
   mainWindow.on('close', (event) => {
@@ -104,16 +104,12 @@ function createWindow(): void {
     }
   });
 
-  const devServerUrl = process.env.VITE_DEV_SERVER_URL;
   const distHtmlPath = path.join(__dirname, '../dist/index.html');
 
-  if (devServerUrl) {
-    mainWindow.loadURL(devServerUrl).catch(() => {
-      mainWindow?.loadFile(distHtmlPath);
-    });
-  } else {
-    mainWindow.loadFile(distHtmlPath);
-  }
+  // Try loading local Vite dev server first, otherwise fall back to compiled dist
+  mainWindow.loadURL('http://localhost:5173').catch(() => {
+    mainWindow?.loadFile(distHtmlPath);
+  });
 
   // Open DevTools only if explicitly requested
   if (process.env.OPEN_DEVTOOLS === 'true') {
@@ -149,11 +145,16 @@ ipcMain.on('nova:quit-app', () => {
 });
 
 // App Lifecycle
+app.setName('NOVA Desktop Assistant');
+
+const isDev = process.env.NODE_ENV !== 'production' && !app.isPackaged;
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 
-if (!gotSingleInstanceLock) {
+if (!gotSingleInstanceLock && !isDev) {
+  console.log('Another instance is already running. Quitting.');
   app.quit();
 } else {
+  console.log('Acquired instance lock or dev mode active. Initializing app...');
   app.on('second-instance', () => {
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
@@ -163,6 +164,7 @@ if (!gotSingleInstanceLock) {
   });
 
   app.whenReady().then(() => {
+    console.log('Electron app is ready. Creating main window...');
     createWindow();
     setupTray();
 

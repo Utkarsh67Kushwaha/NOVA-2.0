@@ -1,7 +1,9 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import AsyncGenerator
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 import uvicorn
 
 from backend.app.api.routes import router
@@ -35,6 +37,12 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(router)
+
+    # Serve built frontend static files if available
+    dist_dir = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
+    if dist_dir.exists():
+        app.mount("/", StaticFiles(directory=str(dist_dir), html=True), name="frontend")
+
     return app
 
 
@@ -47,7 +55,7 @@ def start() -> None:
         "backend.app.main:app",
         host=settings.NOVA_HOST,
         port=settings.NOVA_PORT,
-        reload=(settings.NOVA_ENV == "development"),
+        reload=False,
         log_level=settings.LOG_LEVEL.lower(),
     )
 
