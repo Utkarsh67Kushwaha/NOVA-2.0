@@ -93,3 +93,51 @@ def test_api_ml_report_endpoint(client):
     assert "selected_model" in data
     assert "model_comparisons" in data
     assert len(data["model_comparisons"]) >= 3
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "screenshot lo",
+        "screenshot le lo",
+        "sc le lo",
+        "take screenshot",
+        "take a screenshot",
+        "ek screenshot le lo",
+        "screen capture karo",
+        "screen shot kheencho",
+        "screen shot lay low",
+        "स्क्रीनशॉट ले लो",
+    ],
+)
+def test_screenshot_intent_variations(query):
+    """Verify all English, Hinglish, Hindi, and phonetic variations of screenshot match OPEN_APP with screenshot."""
+    res = intent_service.predict(query)
+    assert res["intent"] == "OPEN_APP"
+    assert res["entities"].get("app_name") == "screenshot"
+    assert res["confidence"] >= 0.95
+    assert res["needs_clarification"] is False
+
+
+@pytest.mark.parametrize(
+    "query,expected_action,expected_control",
+    [
+        ("volume 50 percent karo", "set_volume", "volume"),
+        ("volume badhao", "adjust_volume", "volume"),
+        ("aawaz kam karo", "adjust_volume", "volume"),
+        ("mute karo", "mute", "volume"),
+        ("unmute karo", "unmute", "volume"),
+        ("brightness 80 kar do", "set_brightness", "brightness"),
+        ("brightness badhao", "adjust_brightness", "brightness"),
+        ("screen light kam karo", "adjust_brightness", "brightness"),
+        ("pc lock karo", "lock_workstation", "power"),
+        ("lock my pc", "lock_workstation", "power"),
+    ],
+)
+def test_hardware_control_intents(query, expected_action, expected_control):
+    """Verify system hardware & security controls are correctly classified."""
+    res = intent_service.predict(query)
+    assert res["intent"] == "SYSTEM_CONTROL"
+    assert res["entities"].get("action") == expected_action
+    assert res["entities"].get("control_type") == expected_control
+    assert res["confidence"] >= 0.95

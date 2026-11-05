@@ -73,13 +73,50 @@ class IntentClassifierService:
         return self.model is not None and self.vectorizer is not None
 
     def normalize(self, text: str) -> str:
-        """Preprocesses input query and corrects common phonetic STT errors."""
+        """Preprocesses input query, transliterates Hindi/Devanagari, and corrects common phonetic STT errors."""
         text = text.lower().strip()
-        text = re.sub(r"[.!?,\"]+$", "", text).strip()
+        text = re.sub(r"""[.!?,'"]+$""", "", text).strip()
         text = re.sub(r"\s+", " ", text)
 
-        # Phonetic corrections for common Faster-Whisper mishearings on Indian/Hinglish phrases
+        # Transliterate common Hindi/Devanagari voice terms to standard Latin Hinglish
+        devanagari_map = {
+            'स्क्रीनशॉट': 'screenshot', 'स्क्रीन शॉट': 'screenshot', 'स्क्रीन': 'screen', 'खींचो': 'kheencho',
+            'वॉल्यूम': 'volume', 'आवाज़': 'aawaz', 'आवाज': 'aawaz', 'साउंड': 'sound', 'बढ़ाओ': 'badhao',
+            'बढ़ा': 'badha', 'कम': 'kam', 'घटाओ': 'kam', 'म्यूट': 'mute', 'अनम्यूट': 'unmute',
+            'ब्राइटनेस': 'brightness', 'लाइट': 'light', 'रोशनी': 'light',
+            'लॉक': 'lock', 'पीसी': 'pc', 'कंप्यूटर': 'computer', 'सिस्टम': 'system', 'बंद': 'band',
+            'नोटपैड': 'notepad', 'कैलकुलेटर': 'calculator', 'कैलक': 'calc', 'क्रोम': 'chrome',
+            'ब्राउज़र': 'browser', 'स्पॉटिफ़ाई': 'spotify', 'स्पॉटीफाई': 'spotify', 'खोलो': 'kholo',
+            'ओपन': 'open', 'चलाओ': 'chalao', 'शुरू': 'shuru',
+            'गाना': 'gana', 'गाने': 'gana', 'गीत': 'gana', 'म्यूजिक': 'music', 'सॉन्ग': 'song',
+            'बजाओ': 'bajao', 'रोको': 'roko', 'पॉज़': 'pause', 'पॉज': 'pause', 'रिज्यूम': 'resume',
+            'अगला': 'next', 'पिछला': 'previous',
+            'रिमाइंडर': 'reminder', 'अलार्म': 'alarm', 'याद': 'yaad', 'दिलाओ': 'dilao', 'लगाओ': 'lagao',
+            'मिनट': 'minute', 'सेकंड': 'second', 'घंटे': 'ghante', 'घंटा': 'ghanta', 'बाद': 'baad',
+            'पानी': 'water', 'पीने': 'peene', 'बैटरी': 'battery', 'रैम': 'ram', 'सीपीयू': 'cpu',
+            'डिस्क': 'disk', 'प्रतिशत': '%', 'परसेंट': '%', 'करो': 'karo', 'कर': 'kar', 'दो': 'do', 'ले': 'le', 'लो': 'lo',
+        }
+        for dev_k, dev_v in devanagari_map.items():
+            if dev_k in text:
+                text = text.replace(dev_k, dev_v)
+
+        # Phonetic corrections for common Faster-Whisper mishearings on Indian/Hinglish speech
         whisper_phonetic_fixes = [
+            # Screenshot variants
+            (r"\b(?:screen\s*shot\s+lay\s+low|screen\s*short|clean\s*shot|screan\s*shot|take\s+clean\s*shot)\b", "take screenshot"),
+            (r"\b(?:sc\s+lay\s+low|ask\s+lay\s+low|sc\s+lelo)\b", "sc le lo"),
+            (r"\b(?:screen\s*shot\s+lo|screen\s*shot\s+le\s+lo)\b", "screenshot le lo"),
+            # Audio & Volume variants
+            (r"\b(?:always\s+bad\s*how|always\s+badhao|our\s+badhao|always\s+badha\s*do)\b", "aawaz badhao"),
+            (r"\b(?:always\s+come\s*car|always\s+kam\s*karo|our\s+kam\s*karo)\b", "aawaz kam karo"),
+            (r"\b(?:volume\s+badao|volume\s+badha\s+do|volume\s+inc)\b", "volume badhao"),
+            (r"\b(?:volume\s+bada\s+do|sound\s+badao)\b", "volume badhao"),
+            (r"\b(?:volume\s+kam\s+karo|volume\s+ghatao|volume\s+thoda\s+kam)\b", "volume kam karo"),
+            # Power & Lock
+            (r"\b(?:piece\s+lock|peace\s+lock|pc\s+log|lock\s+peace)\b", "pc lock karo"),
+            # Music & Media
+            (r"\b(?:gonna\s+rock\s+oh|ganna\s+roko|gana\s+rock\s*o)\b", "gana roko"),
+            (r"\b(?:ganna\s+bajao|ganna\s+chalao)\b", "gana bajao"),
             (r"\b(?:lay|let|play)\s+it\s+serious\s+on\b", "play kesariya song"),
             (r"\b(?:lay|play)\s+it\s+serious\b", "play kesariya"),
             (r"\b(?:it\s+)?serious\s+on\b", "kesariya song"),
@@ -214,6 +251,74 @@ class IntentClassifierService:
                 "confidence": 0.0,
                 "needs_clarification": True,
                 "clarification_message": "Command was empty. Please provide a command.",
+            }
+
+        # 0. Screenshot & Screen Clip commands
+        if (
+            re.search(r"\b(?:screenshot|screen\s*shot|screen\s*clip|screencapture|screen\s*capture)\b", clean)
+            or any(p in clean for p in [
+                "screenshot lo", "screenshot le lo", "sc le lo", "take screenshot", "take a screenshot",
+                "ek screenshot", "screen capture karo", "kheencho", "screen capture", "capture screen",
+                "screen shot lo", "screen shot le lo", "screenshot nikal lo", "screenshot lelo",
+                "sc lo", "sc kheencho", "sc lelo"
+            ])
+        ):
+            return {
+                "query": text,
+                "intent": "OPEN_APP",
+                "raw_intent": "OPEN_APP",
+                "confidence": 0.98,
+                "confidence_percent": 98.0,
+                "threshold": self.confidence_threshold,
+                "needs_clarification": False,
+                "entities": {"app_name": "screenshot"},
+                "model_name": "RulePriority-Screenshot",
+                "top_probabilities": {"OPEN_APP": 0.98},
+            }
+
+        # 0.5 App Launching Rules (e.g., "notepad kholo", "open calculator", "chrome launch karo")
+        app_open_match = re.search(r"\b(?:open|launch|kholo|chalao|start)\s+(notepad|calculator|calc|chrome|spotify|code|vscode|terminal|cmd|powershell|explorer|settings)\b", clean) or                          re.search(r"\b(notepad|calculator|calc|chrome|spotify|code|vscode|terminal|cmd|powershell|explorer|settings)\s+(?:kholo|open|launch|chalao|start)\b", clean)
+        if app_open_match:
+            app_id = app_open_match.group(1).lower().strip()
+            return {
+                "query": text,
+                "intent": "OPEN_APP",
+                "raw_intent": "OPEN_APP",
+                "confidence": 0.98,
+                "confidence_percent": 98.0,
+                "threshold": self.confidence_threshold,
+                "needs_clarification": False,
+                "entities": {"app_name": app_id},
+                "model_name": "RulePriority-AppLaunch",
+                "top_probabilities": {"OPEN_APP": 0.98},
+            }
+
+        # 0.7 System Specs & Hardware Diagnostics Rules
+        if any(p in clean for p in [
+            "battery kitni hai", "battery percent", "battery status", "charge kitna hai", "battery check",
+            "ram usage", "ram kitni", "memory usage", "cpu usage", "cpu load", "disk space",
+            "storage kitni", "system specs", "system status", "hardware status"
+        ]):
+            metric = "all"
+            if "battery" in clean or "charge" in clean:
+                metric = "battery"
+            elif "ram" in clean or "memory" in clean:
+                metric = "memory"
+            elif "cpu" in clean:
+                metric = "cpu"
+            elif "disk" in clean or "storage" in clean:
+                metric = "disk"
+            return {
+                "query": text,
+                "intent": "SYSTEM_INFO",
+                "raw_intent": "SYSTEM_INFO",
+                "confidence": 0.98,
+                "confidence_percent": 98.0,
+                "threshold": self.confidence_threshold,
+                "needs_clarification": False,
+                "entities": {"metric_targets": [metric]},
+                "model_name": "RulePriority-SystemInfo",
+                "top_probabilities": {"SYSTEM_INFO": 0.98},
             }
 
         # Rule priority for Hardware & System Controls (Volume, Brightness, Lock)

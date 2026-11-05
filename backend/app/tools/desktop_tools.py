@@ -480,7 +480,7 @@ class ManageWindowTool(BaseTool):
 
 
 class TakeScreenshotTool(BaseTool):
-    """Tool to capture screen image or trigger Windows Snipping Tool (SC)."""
+    """Tool to capture high-definition desktop screenshot and save to Pictures/Screenshots."""
 
     def __init__(self):
         super().__init__(
@@ -495,57 +495,152 @@ class TakeScreenshotTool(BaseTool):
             ToolParamSchema(
                 name="open_snipping_tool",
                 type="boolean",
-                description="Whether to open the interactive Screen Clip tool (default True)",
+                description="Whether to also open interactive Windows Screen Clip (default False)",
                 required=False,
-                default=True,
+                default=False,
             )
         ]
 
-    def execute(self, **kwargs: Any) -> ToolResult:
-        saved_path = None
+    def _capture_screen(self) -> Optional[str]:
+        """Captures active screen using Windows GDI BitBlt, falling back to PIL or PowerShell."""
+        dest_dir = Path.home() / "Pictures" / "Screenshots"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        filename = f"NOVA_SC_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+        dest_path = dest_dir / filename
 
-        # Attempt PIL full screen grab
+        # Method 1: Native Windows GDI BitBlt with DPI awareness (cleanest & fastest)
+        try:
+            import ctypes
+            from ctypes import wintypes
+            from PIL import Image
+
+            user32 = ctypes.windll.user32
+            gdi32 = ctypes.windll.gdi32
+
+            try:
+                user32.SetProcessDPIAware()
+            except Exception:
+                pass
+
+            w = user32.GetSystemMetrics(0)  # SM_CXSCREEN
+            h = user32.GetSystemMetrics(1)  # SM_CYSCREEN
+
+            hdesktop = user32.GetDesktopWindow()
+            hdc_screen = user32.GetWindowDC(hdesktop)
+            hdc_mem = gdi32.CreateCompatibleDC(hdc_screen)
+            hbitmap = gdi32.CreateCompatibleBitmap(hdc_screen, w, h)
+            gdi32.SelectObject(hdc_mem, hbitmap)
+
+            # SRCCOPY | CAPTUREBLT
+            gdi32.BitBlt(hdc_mem, 0, 0, w, h, hdc_screen, 0, 0, 0x00CC0020 | 0x40000000)
+
+            class BITMAPINFOHEADER(ctypes.Structure):
+                _fields_ = [
+                    ("biSize", wintypes.DWORD),
+                    ("biWidth", wintypes.LONG),
+                    ("biHeight", wintypes.LONG),
+                    ("biPlanes", wintypes.WORD),
+                    ("biBitCount", wintypes.WORD),
+                    ("biCompression", wintypes.DWORD),
+                    ("biSizeImage", wintypes.DWORD),
+                    ("biXPelsPerMeter", wintypes.LONG),
+                    ("biYPelsPerMeter", wintypes.LONG),
+                    ("biClrUsed", wintypes.DWORD),
+                    ("biClrImportant", wintypes.DWORD),
+                ]
+
+            bmi = BITMAPINFOHEADER()
+            bmi.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+            bmi.biWidth = w
+            bmi.biHeight = -h  # Top-down bitmap
+            bmi.biPlanes = 1
+            bmi.biBitCount = 32
+            bmi.biCompression = 0
+
+            buf = ctypes.create_string_buffer(w * h * 4)
+            gdi32.GetDIBits(hdc_mem, hbitmap, 0, h, buf, ctypes.byref(bmi), 0)
+
+            gdi32.DeleteObject(hbitmap)
+            gdi32.DeleteDC(hdc_mem)
+            user32.ReleaseDC(hdesktop, hdc_screen)
+
+            im = Image.frombuffer("RGBA", (w, h), buf, "raw", "BGRA", 0, 1)
+            im.save(str(dest_path), format="PNG")
+            if dest_path.exists() and dest_path.stat().st_size > 1000:
+                return str(dest_path)
+        except Exception as e:
+            logger.debug("GDI screen capture failed, trying fallback: %s", e)
+
+        # Method 2: PIL ImageGrab fallback
         try:
             from PIL import ImageGrab
-            dest_dir = Path.home() / "Pictures" / "Screenshots"
-            dest_dir.mkdir(parents=True, exist_ok=True)
-            filename = f"NOVA_SC_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-            dest_path = dest_dir / filename
             im = ImageGrab.grab()
             im.save(str(dest_path))
-            saved_path = str(dest_path)
+            if dest_path.exists() and dest_path.stat().st_size > 1000:
+                return str(dest_path)
         except Exception:
             pass
 
-        # Trigger Windows Screen Clip / Snipping Tool
+        # Method 3: PowerShell .NET Graphics fallback
         try:
-            subprocess.Popen(["cmd.exe", "/c", "start", "ms-screenclip:"], shell=False)
+            ps_cmd = (
+                "Add-Type -AssemblyName System.Windows.Forms; "
+                "Add-Type -AssemblyName System.Drawing; "
+                "$b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds; "
+                "$bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height; "
+                "$g = [System.Drawing.Graphics]::FromImage($bmp); "
+                "$g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size); "
+                f"$bmp.Save('{str(dest_path)}', [System.Drawing.Imaging.ImageFormat]::Png); "
+                "$g.Dispose(); $bmp.Dispose();"
+            )
+            subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_cmd],
+                capture_output=True,
+                timeout=3.0,
+            )
+            if dest_path.exists() and dest_path.stat().st_size > 1000:
+                return str(dest_path)
         except Exception:
+            pass
+
+        return None
+
+    def execute(self, **kwargs: Any) -> ToolResult:
+        open_snipping = kwargs.get("open_snipping_tool", False)
+        saved_path = self._capture_screen()
+
+        if open_snipping:
             try:
-                subprocess.Popen(["snippingtool.exe"], shell=False)
+                subprocess.Popen(["cmd.exe", "/c", "start", "ms-screenclip:"], shell=False)
             except Exception:
                 pass
 
         if saved_path:
-            output = f"Screenshot captured and saved to: {saved_path}. Windows Screen Clip (SC) opened."
+            output = f"Screenshot taken and saved to {saved_path}."
         else:
-            output = "Windows Screen Clip (SC) opened. Use your mouse to snip the screen area."
+            output = "Failed to capture screenshot."
 
         result = ToolResult(
             tool_name=self.name,
-            success=True,
+            success=bool(saved_path),
             output=output,
-            data={"screenshot_path": saved_path, "feature": "screenshot"},
+            data={
+                "screenshot_path": saved_path,
+                "filename": os.path.basename(saved_path) if saved_path else None,
+                "feature": "screenshot",
+            },
         )
         result.verification = self.verify(result, path=saved_path)
         return result
 
     def verify(self, result: ToolResult, **kwargs: Any) -> VerificationResult:
+        p = kwargs.get("path")
+        ok = bool(p and os.path.exists(p) and os.path.getsize(p) > 1000)
         return VerificationResult(
-            verified=True,
-            method="screenclip_dispatch_verification",
-            details="Screen capture dispatched to Windows Shell successfully.",
-            metrics={"has_saved_file": bool(kwargs.get("path"))},
+            verified=ok,
+            method="file_existence_and_size_check",
+            details=f"Screenshot file verified on disk ({p})" if ok else "No valid screenshot file found.",
+            metrics={"has_saved_file": ok, "file_path": p},
         )
 
 
@@ -711,6 +806,11 @@ class SystemControlTool(BaseTool):
             ok = hardware_controller.lock_workstation()
             output = "Workstation session locked successfully." if ok else "Failed to lock workstation."
             data["locked"] = ok
+
+        elif action in ("sleep", "sleep_workstation", "suspend"):
+            ok = hardware_controller.sleep_workstation()
+            output = "System entering sleep mode..." if ok else "Failed to put system to sleep."
+            data["sleep"] = ok
 
         else:
             diag = hardware_controller.get_hardware_status()

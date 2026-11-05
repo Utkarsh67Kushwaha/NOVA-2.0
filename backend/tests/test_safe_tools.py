@@ -234,3 +234,34 @@ def test_system_control_hardware_tool():
     assert cmd_data["intent"] == "SYSTEM_CONTROL"
     assert cmd_data["executed_tool"] == "system_control"
     assert "60%" in cmd_data["live_response"]
+
+
+def test_take_screenshot_tool():
+    """Verify take_screenshot captures real desktop image and verifies file on disk."""
+    res = default_registry.execute("take_screenshot", {"open_snipping_tool": False})
+    assert res.success is True
+    assert res.verification.verified is True
+    path_str = res.data.get("screenshot_path")
+    assert path_str is not None
+    p = Path(path_str)
+    assert p.exists()
+    assert p.stat().st_size > 1000
+
+    # Clean up generated screenshot
+    try:
+        p.unlink()
+    except Exception:
+        pass
+
+    # Test /api/command routing for Hinglish screenshot
+    res_cmd = client.post("/api/command", json={"text": "screenshot le lo"})
+    assert res_cmd.status_code == 200
+    cmd_data = res_cmd.json()
+    assert cmd_data["executed_tool"] == "take_screenshot"
+    assert cmd_data["tool_result"]["success"] is True
+    sc_path = cmd_data["tool_result"]["data"].get("screenshot_path")
+    if sc_path and Path(sc_path).exists():
+        try:
+            Path(sc_path).unlink()
+        except Exception:
+            pass

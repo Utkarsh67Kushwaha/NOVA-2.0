@@ -10,9 +10,14 @@ logger = logging.getLogger("nova.voice.stt")
 
 # Context prompt to bias Whisper toward recognizing bilingual Indian/Hinglish commands & popular desktop tasks
 DEFAULT_INITIAL_PROMPT = (
-    "Hey NOVA desktop assistant. Commands: play song, kesariya, gaana bajao, chalao, "
-    "open chrome, notepad, calculator, calc, sc, take screenshot, system info, battery, "
-    "ram, cpu, reminder, stop, pause, resume, continue, aage play karo, gana band karo."
+    "Hey NOVA desktop assistant. Bilingual Hinglish & English voice commands: "
+    "screenshot le lo, screenshot lo, take screenshot, sc le lo, ek screenshot lo, screen capture karo, "
+    "volume 50 percent karo, volume badhao, volume kam karo, aawaz badhao, aawaz kam karo, mute karo, unmute karo, "
+    "brightness badhao, brightness kam karo, screen light 70 percent karo, "
+    "pc lock karo, computer lock karo, lock my pc, "
+    "notepad kholo, calculator kholo, chrome kholo, spotify kholo, "
+    "kesariya song play karo, gaana bajao, gana roko, pause music, resume music, agla gana, "
+    "paani peene ka reminder lagao, 5 minute baad reminder lagao, remind me to drink water."
 )
 
 
@@ -86,7 +91,7 @@ class SpeechToTextService:
         start_time = time.perf_counter()
         prompt = initial_prompt or DEFAULT_INITIAL_PROMPT
 
-        target_language = language or "en"
+        target_language = language
 
         segments, info = model.transcribe(
             normalized_audio,
