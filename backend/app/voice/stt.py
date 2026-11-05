@@ -47,6 +47,7 @@ class SpeechToTextService:
                 self.model_size,
                 device=self.device,
                 compute_type=self.compute_type,
+                cpu_threads=6,
                 download_root=str(self.download_root),
             )
             logger.info("Loaded Faster-Whisper model in %.2fs", time.perf_counter() - start_load)
@@ -98,10 +99,12 @@ class SpeechToTextService:
 
         segments, info = model.transcribe(
             normalized_audio,
-            beam_size=5,
+            beam_size=1,
+            best_of=1,
             language=target_language,
             initial_prompt=prompt,
             vad_filter=False,  # We already perform sensitive adaptive VAD before feeding
+            condition_on_previous_text=False,
             temperature=0.0,
         )
 

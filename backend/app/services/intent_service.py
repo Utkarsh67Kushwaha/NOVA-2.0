@@ -282,6 +282,87 @@ class IntentClassifierService:
                 "clarification_message": "Command was empty. Please provide a command.",
             }
 
+        # 0. Alexa-grade Direct Single-Word App Invocations
+        direct_apps = {
+            "calc": "calculator",
+            "calculator": "calculator",
+            "notepad": "notepad",
+            "chrome": "chrome",
+            "browser": "chrome",
+            "spotify": "spotify",
+            "vscode": "vscode",
+            "code": "vscode",
+            "terminal": "cmd",
+            "cmd": "cmd",
+            "powershell": "powershell",
+            "camera": "camera",
+            "paint": "paint",
+            "settings": "settings",
+            "explorer": "explorer",
+            "taskmanager": "task manager",
+            "task manager": "task manager",
+        }
+        if clean in direct_apps or stripped in direct_apps:
+            app_id = direct_apps.get(clean, direct_apps.get(stripped))
+            return {
+                "query": text,
+                "intent": "OPEN_APP",
+                "raw_intent": "OPEN_APP",
+                "confidence": 0.98,
+                "confidence_percent": 98.0,
+                "threshold": self.confidence_threshold,
+                "needs_clarification": False,
+                "entities": {"app_name": app_id},
+                "model_name": "RulePriority-DirectApp",
+                "top_probabilities": {"OPEN_APP": 0.98},
+            }
+
+        # 0.1 Alexa-grade Direct Mute / Unmute
+        if clean in ("mute", "unmute") or stripped in ("mute", "unmute") or re.search(r"\b(?:mute|unmute)\b", clean):
+            action = "unmute" if "unmute" in clean else "mute"
+            return {
+                "query": text,
+                "intent": "SYSTEM_CONTROL",
+                "raw_intent": "SYSTEM_CONTROL",
+                "confidence": 0.98,
+                "confidence_percent": 98.0,
+                "threshold": self.confidence_threshold,
+                "needs_clarification": False,
+                "entities": {"control_type": "volume", "action": action, "value": None},
+                "model_name": "RulePriority-Mute",
+                "top_probabilities": {"SYSTEM_CONTROL": 0.98},
+            }
+
+        # 0.2 Alexa-grade Direct Battery, Time, Date, Weather
+        if clean == "battery" or stripped == "battery" or any(p in clean for p in ["battery kitni", "battery status", "charge kitna", "battery bachi"]):
+            return {
+                "query": text,
+                "intent": "SYSTEM_INFO",
+                "raw_intent": "SYSTEM_INFO",
+                "confidence": 0.98,
+                "confidence_percent": 98.0,
+                "threshold": self.confidence_threshold,
+                "needs_clarification": False,
+                "entities": {"metric_targets": ["battery"]},
+                "model_name": "RulePriority-Battery",
+                "top_probabilities": {"SYSTEM_INFO": 0.98},
+            }
+
+        is_search_query = any(w in clean for w in ["search", "google", "khojo", "dhoondo", "find"])
+        if not is_search_query and any(w in clean for w in ["time", "samay", "kitne baje", "kya time", "date", "tareekh", "today", "mausam", "weather"]):
+            return {
+                "query": text,
+                "intent": "AI_CHAT",
+                "raw_intent": "AI_CHAT",
+                "confidence": 0.98,
+                "confidence_percent": 98.0,
+                "threshold": self.confidence_threshold,
+                "needs_clarification": False,
+                "entities": {"query": text},
+                "model_name": "RulePriority-TimeDateWeather",
+                "top_probabilities": {"AI_CHAT": 0.98},
+            }
+
         # Check conversational queries & AI questions
         ai_chat_keywords = [
             "tum kaun ho", "who are you", "naam kya hai", "what is your name", "kya naam hai",
@@ -312,15 +393,15 @@ class IntentClassifierService:
 
         # 0. Screenshot & Screen Clip commands (with photo/picture/tasveer synonyms)
         is_sc = (
-            re.search(r"\b(?:screenshot|screen\s*shot|screen\s*clip|screencapture|screen\s*capture)\b", clean)
+            bool(re.search(r"\b(?:screenshot|screen\s*shot|screen\s*clip|screencapture|screen\s*capture|sc)\b", clean))
             or any(p in clean or p in stripped for p in [
                 "screenshot lo", "screenshot le lo", "sc le lo", "take screenshot", "take a screenshot",
                 "ek screenshot", "screen capture karo", "kheencho", "screen capture", "capture screen",
                 "screen shot lo", "screen shot le lo", "screenshot nikal lo", "screenshot lelo",
                 "sc lo", "sc kheencho", "sc lelo", "screen ka photo", "screen photo", "screen ki pic",
-                "screen capture", "desktop photo", "display photo"
+                "screen capture", "desktop photo", "display photo", "photo lo", "pic lo", "snap lo"
             ])
-            or (("screen" in clean or "desktop" in clean) and any(w in clean for w in ["photo", "pic", "tasveer", "snap", "snip"]))
+            or (("screen" in clean or "desktop" in clean) and any(w in clean for w in ["photo", "pic", "tasveer", "snap", "snip", "kheencho"]))
         )
         if is_sc:
             return {
@@ -557,11 +638,15 @@ class IntentClassifierService:
 
         # 3. Security & Power Lock commands
         is_lock_cmd = (
-            ("lock" in clean or "lock" in stripped)
-            and any(w in clean or w in stripped for w in ["pc", "screen", "computer", "laptop", "system", "workstation", "windows", "desktop"])
-        ) or any(p in clean or p in stripped for p in [
-            "lock pc", "pc lock", "lock karo", "lock kar do", "screen lock", "lock screen", "laptop lock", "computer lock", "lock computer"
-        ])
+            clean in ["lock", "lock it", "screen lock", "pc lock", "system lock"]
+            or stripped in ["lock", "lock it", "screen lock", "pc lock", "system lock"]
+            or (
+                ("lock" in clean or "lock" in stripped)
+                and any(w in clean or w in stripped for w in ["pc", "screen", "computer", "laptop", "system", "workstation", "windows", "desktop"])
+            ) or any(p in clean or p in stripped for p in [
+                "lock pc", "pc lock", "lock karo", "lock kar do", "screen lock", "lock screen", "laptop lock", "computer lock", "lock computer"
+            ])
+        )
         if is_lock_cmd:
             return {
                 "query": text,
@@ -591,21 +676,18 @@ class IntentClassifierService:
             }
 
         # Rule priority for hardware media transport control commands
-        media_pause_patterns = [
-            "stop", "pause", "pause the song", "pause music", "stop music", "stop the song",
-            "gana roko", "gana band karo", "gaana band", "music band karo", "ruk jao", "chup ho jao",
-            "pause karo", "pause kar do", "band kar do", "band karo"
+        stop_pats = [
+            "stop", "pause", "chup", "chup ho", "chup ho jao", "chup kar", "chup raho",
+            "ruk", "ruk jao", "ruk ja", "shant", "band karo", "band kar do", "roko",
+            "pause the song", "pause music", "stop music", "stop the song", "gana roko",
+            "gaana roko", "gana band karo", "gaana band karo", "music band", "music roko"
         ]
-        media_resume_patterns = [
-            "play", "resume", "continue", "resume music", "resume song", "resume the song",
-            "gana chalao", "wapas bajao", "aage play karo", "fir se chalao"
-        ]
-        media_next_patterns = ["next song", "agla gana", "skip song", "next track", "skip"]
-        media_prev_patterns = ["previous song", "pichla gana", "prev song", "previous track"]
-
-        has_media_stop = any(p in clean or p in stripped for p in media_pause_patterns) or (
-            any(w in clean or w in stripped for w in ["gana", "gaana", "music", "song"]) and
-            any(w in clean or w in stripped for w in ["band", "roko", "rok", "pause", "stop"])
+        has_media_stop = (
+            any(re.search(r"\b" + re.escape(p) + r"\b", clean) or re.search(r"\b" + re.escape(p) + r"\b", stripped) for p in stop_pats)
+            or (
+                any(w in clean or w in stripped for w in ["gana", "gaana", "music", "song"]) and
+                any(w in clean or w in stripped for w in ["band", "roko", "rok", "pause", "stop"])
+            )
         )
         if has_media_stop:
             return {
@@ -620,20 +702,11 @@ class IntentClassifierService:
                 "model_name": "RulePriority-MediaControl",
                 "top_probabilities": {"PLAY_MUSIC": 0.98},
             }
-        if clean in media_resume_patterns:
-            return {
-                "query": text,
-                "intent": "PLAY_MUSIC",
-                "raw_intent": "PLAY_MUSIC",
-                "confidence": 0.98,
-                "confidence_percent": 98.0,
-                "threshold": self.confidence_threshold,
-                "needs_clarification": False,
-                "entities": {"action": "resume", "track_or_query": ""},
-                "model_name": "RulePriority-MediaControl",
-                "top_probabilities": {"PLAY_MUSIC": 0.98},
-            }
-        if clean in media_next_patterns:
+
+        media_next_patterns = ["next", "next song", "agla gana", "skip song", "next track", "skip", "aage badhao"]
+        media_prev_patterns = ["previous", "prev", "previous song", "pichla gana", "prev song", "previous track", "peeche karo"]
+
+        if clean in ["next", "skip"] or stripped in ["next", "skip"] or any(p in clean or p in stripped for p in ["next song", "agla gana", "skip song", "next track"]):
             return {
                 "query": text,
                 "intent": "PLAY_MUSIC",
@@ -646,7 +719,8 @@ class IntentClassifierService:
                 "model_name": "RulePriority-MediaControl",
                 "top_probabilities": {"PLAY_MUSIC": 0.98},
             }
-        if clean in media_prev_patterns:
+
+        if clean in ["previous", "prev"] or stripped in ["previous", "prev"] or any(p in clean or p in stripped for p in ["previous song", "pichla gana", "prev song", "previous track"]):
             return {
                 "query": text,
                 "intent": "PLAY_MUSIC",
@@ -656,6 +730,40 @@ class IntentClassifierService:
                 "threshold": self.confidence_threshold,
                 "needs_clarification": False,
                 "entities": {"action": "previous", "track_or_query": ""},
+                "model_name": "RulePriority-MediaControl",
+                "top_probabilities": {"PLAY_MUSIC": 0.98},
+            }
+
+        has_music_indicator = any(re.search(r"\b" + re.escape(w) + r"\b", clean) for w in ["gana", "gaana", "gaane", "gane", "music", "song", "songs", "geet", "track", "spotify"])
+        has_play_verb = any(re.search(r"\b" + re.escape(w) + r"\b", clean) for w in ["play", "chala", "chalao", "bajao", "baja", "sunao", "suna", "lagao", "laga", "resume"])
+        is_generic_play = clean in ["play", "resume", "continue"] or stripped in ["play", "resume", "continue"]
+
+        if (has_music_indicator or is_generic_play or (has_play_verb and not is_search_query)):
+            t = clean
+            filler_patterns = [
+                r"\b(?:bhai|hey|ok|kripya|please|suno|nova|chal|beta|yaar|dost)\b",
+                r"\b(?:play\s+karo|play\s+kar\s+do|play|resume|continue)\b",
+                r"\b(?:chala\s+de|chala\s+do|chalao|chala|chalaye)\b",
+                r"\b(?:baja\s+de|baja\s+do|bajao|baja|bajaye)\b",
+                r"\b(?:suna\s+de|suna\s+do|sunao|suna|sunaye)\b",
+                r"\b(?:laga\s+de|laga\s+do|lagao|laga|lagaye)\b",
+                r"\b(?:gaana|gaane|gana|gane|geet|music|song|songs|track)\b",
+                r"\b(?:koi|ek|achha|accha|badhiya|mast|famous|hit)\b",
+                r"\b(?:ka|ke|ki|ko|me|par|pe|on\s+spotify|on\s+youtube)\b",
+            ]
+            for pat in filler_patterns:
+                t = re.sub(pat, " ", t, flags=re.IGNORECASE)
+            track = re.sub(r"\s+", " ", t).strip(" ,.?!-:")
+            action = "play" if track else "resume"
+            return {
+                "query": text,
+                "intent": "PLAY_MUSIC",
+                "raw_intent": "PLAY_MUSIC",
+                "confidence": 0.98,
+                "confidence_percent": 98.0,
+                "threshold": self.confidence_threshold,
+                "needs_clarification": False,
+                "entities": {"action": action, "track_or_query": track},
                 "model_name": "RulePriority-MediaControl",
                 "top_probabilities": {"PLAY_MUSIC": 0.98},
             }

@@ -13,8 +13,8 @@ class VoiceActivityDetector:
     def __init__(
         self,
         energy_threshold: float = 0.0009,
-        silence_timeout_sec: float = 1.1,
-        min_speech_duration_sec: float = 0.22,
+        silence_timeout_sec: float = 0.45,
+        min_speech_duration_sec: float = 0.20,
     ):
         self.energy_threshold = energy_threshold
         self.silence_timeout_sec = silence_timeout_sec

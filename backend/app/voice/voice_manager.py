@@ -46,11 +46,11 @@ class VoiceAssistantManager:
 
     def __init__(self):
         self.state: VoiceState = VoiceState.IDLE
-        # Human-optimized VAD: 0.0014 energy threshold, 1.1s natural pause, 0.22s min speech
+        # Alexa-grade snappy VAD: 0.0009 energy threshold, 0.45s silence endpointing, 0.20s min speech
         self.vad = VoiceActivityDetector(
-            energy_threshold=0.0014,
-            silence_timeout_sec=1.1,
-            min_speech_duration_sec=0.22,
+            energy_threshold=0.0009,
+            silence_timeout_sec=0.45,
+            min_speech_duration_sec=0.20,
         )
         self.last_transcript: str = ""
         self.last_response: Optional[Dict[str, Any]] = None
@@ -452,27 +452,34 @@ class VoiceAssistantManager:
             self._flush_audio_queue()
 
             collected_audio = []
+            final_speech_audio = None
             start_time = time.time()
             self.vad.reset()
 
             try:
-                # Capture loop
+                # Capture loop with fast 0.05s chunk checking
                 while time.time() - start_time < max_duration_sec:
                     try:
-                        chunk = audio_capture.audio_queue.get(timeout=0.1)
+                        chunk = audio_capture.audio_queue.get(timeout=0.06)
                         speech_result = self.vad.process_chunk(chunk)
                         collected_audio.append(chunk)
 
                         # If VAD detected complete utterance followed by silence
                         if speech_result is not None:
                             logger.info("VAD detected end of speech command.")
+                            final_speech_audio = speech_result
                             break
                     except Exception:
                         continue
 
                 self.state = VoiceState.PROCESSING
 
-                if not collected_audio:
+                # Transcribe ONLY trimmed speech if VAD isolated it, avoiding seconds of dead silence
+                if final_speech_audio is not None and len(final_speech_audio) > 0:
+                    audio_to_transcribe = final_speech_audio
+                elif collected_audio:
+                    audio_to_transcribe = np.concatenate(collected_audio)
+                else:
                     self.state = VoiceState.IDLE
                     media_controller.resume_if_paused_by_voice()
                     return {
@@ -480,10 +487,8 @@ class VoiceAssistantManager:
                         "status": "failed",
                     }
 
-                full_audio = np.concatenate(collected_audio)
-
                 # Step 1: Speech-to-Text Transcription via Faster-Whisper
-                transcript = stt_service.transcribe(full_audio)
+                transcript = stt_service.transcribe(audio_to_transcribe)
                 self.last_transcript = transcript
 
                 if not transcript or not transcript.strip():
@@ -513,7 +518,8 @@ class VoiceAssistantManager:
                 prediction["needs_clarification"] = False
 
                 self.state = VoiceState.SPEAKING
-                tts_service.speak(response_text, blocking=True)
+                # Non-blocking speak allows immediate HTTP response return to UI without audio delay
+                tts_service.speak(response_text, blocking=False)
                 self.state = VoiceState.IDLE
 
                 # Auto-resume media if non-music command
