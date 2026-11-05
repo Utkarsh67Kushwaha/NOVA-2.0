@@ -125,8 +125,8 @@ class IntentClassifierService:
             (r"\b(?:roshni|screen\s*light|display\s*light)\b", "light"),
             (r"\b(?:laptop|computer|system|workstation|machine)\b", "pc"),
         ]
-        for p, r in voice_phonetics:
-            text = re.sub(p, r, text)
+        for pattern, replacement in voice_phonetics:
+            text = re.sub(pattern, replacement, text)
 
         # Phonetic corrections for common Faster-Whisper mishearings on Indian/Hinglish speech
         whisper_phonetic_fixes = [
@@ -702,9 +702,6 @@ class IntentClassifierService:
                 "model_name": "RulePriority-MediaControl",
                 "top_probabilities": {"PLAY_MUSIC": 0.98},
             }
-
-        media_next_patterns = ["next", "next song", "agla gana", "skip song", "next track", "skip", "aage badhao"]
-        media_prev_patterns = ["previous", "prev", "previous song", "pichla gana", "prev song", "previous track", "peeche karo"]
 
         if clean in ["next", "skip"] or stripped in ["next", "skip"] or any(p in clean or p in stripped for p in ["next song", "agla gana", "skip song", "next track"]):
             return {

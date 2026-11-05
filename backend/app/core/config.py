@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     """Application settings with environment variable override support."""
 
     APP_NAME: str = "NOVA Desktop Assistant"
-    VERSION: str = "0.1.0"
+    VERSION: str = "2.0.0"
     NOVA_ENV: str = "development"
 
     # Server binding

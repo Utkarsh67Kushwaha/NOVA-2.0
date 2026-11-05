@@ -95,14 +95,11 @@ class GeminiService:
         return self._offline_conversational_brain(cleaned)
 
     def _ask_gemini(self, query: str) -> Optional[str]:
-        """Calls Google Gemini REST API."""
+        """Calls Google Gemini REST API (synchronous — runs in thread pool via routes layer)."""
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{DEFAULT_MODEL}:generateContent?key={self.api_key}"
 
-        # Build contents with context
-        messages = []
-        for turn in self.chat_history[-6:]:
-            messages.append(turn)
-
+        # Build contents with recent context (last 6 turns)
+        messages = list(self.chat_history[-6:])
         messages.append({"role": "user", "parts": [{"text": query}]})
 
         payload = {

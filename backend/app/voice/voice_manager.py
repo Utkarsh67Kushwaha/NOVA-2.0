@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from backend.app.services.intent_service import intent_service
+from backend.app.services.dispatcher import dispatch_intent
 from backend.app.services.gemini_service import gemini_service
 from backend.app.tools import default_registry
 from backend.app.voice.audio_capture import audio_capture
@@ -107,147 +108,21 @@ class VoiceAssistantManager:
                 break
 
     def _execute_voice_action(self, prediction: Dict[str, Any], command: str) -> str:
-        """Dispatches recognized intent to Safe Tools registry and returns spoken response."""
+        """Dispatches recognised intent to Safe Tools and returns the spoken response text.
+
+        Delegates to the shared ``dispatch_intent`` helper so the voice path and
+        the HTTP route path are always identical (DRY fix).
+        After dispatch, any media-controller state management specific to the voice
+        path (e.g. clearing paused-for-voice flag after a music action) is handled here.
+        """
+        live_response, _, _ = dispatch_intent(prediction, command)
+
+        # Voice-path extra: clear paused-for-voice flag when user gave a music command
         intent = prediction.get("intent")
-        entities = prediction.get("entities", {})
+        if intent == "PLAY_MUSIC":
+            media_controller.clear_paused_state()
 
-        try:
-            if intent == "PLAY_MUSIC":
-                action = entities.get("action", "play")
-                if action in ("pause", "stop"):
-                    t_res = default_registry.execute("media_control", {"action": "pause"})
-                    prediction["executed_tool"] = "media_control"
-                    prediction["tool_result"] = t_res.model_dump()
-                    media_controller.clear_paused_state()
-                    return "Media playback paused."
-                elif action in ("resume", "continue"):
-                    t_res = default_registry.execute("media_control", {"action": "resume"})
-                    prediction["executed_tool"] = "media_control"
-                    prediction["tool_result"] = t_res.model_dump()
-                    media_controller.clear_paused_state()
-                    return "Media playback resumed."
-                elif action == "next":
-                    t_res = default_registry.execute("media_control", {"action": "next"})
-                    prediction["executed_tool"] = "media_control"
-                    prediction["tool_result"] = t_res.model_dump()
-                    media_controller.clear_paused_state()
-                    return "Skipped to next track."
-                elif action == "previous":
-                    t_res = default_registry.execute("media_control", {"action": "previous"})
-                    prediction["executed_tool"] = "media_control"
-                    prediction["tool_result"] = t_res.model_dump()
-                    media_controller.clear_paused_state()
-                    return "Returned to previous track."
-                else:
-                    track = entities.get("track_or_query", "music")
-                    t_res = default_registry.execute("play_music", {"track": track})
-                    prediction["executed_tool"] = "play_music"
-                    prediction["tool_result"] = t_res.model_dump()
-                    media_controller.clear_paused_state()
-                    return f"Opening {track} in Google Chrome."
-
-            elif intent == "OPEN_APP":
-                app_name = entities.get("app_name")
-                canonical_apps = {
-                    "calc": "calc",
-                    "calculator": "calc",
-                    "notepad": "notepad",
-                    "chrome": "chrome",
-                    "browser": "chrome",
-                    "spotify": "spotify",
-                    "vscode": "vscode",
-                    "code": "vscode",
-                    "terminal": "cmd",
-                    "cmd": "cmd",
-                    "powershell": "powershell",
-                    "explorer": "explorer",
-                    "camera": "camera",
-                    "paint": "paint",
-                    "settings": "settings",
-                }
-                mapped_name = canonical_apps.get(app_name, app_name) if app_name else None
-                if app_name in ("sc", "screenshot", "snippingtool"):
-                    t_res = default_registry.execute("take_screenshot", {})
-                    prediction["executed_tool"] = "take_screenshot"
-                    prediction["tool_result"] = t_res.model_dump()
-                    return t_res.output
-                elif mapped_name:
-                    t_res = default_registry.execute("launch_app", {"app_name": mapped_name})
-                    prediction["executed_tool"] = "launch_app"
-                    prediction["tool_result"] = t_res.model_dump()
-                    return t_res.output
-                else:
-                    t_res = default_registry.execute("launch_app", {"app_name": "notepad"})
-                    prediction["executed_tool"] = "launch_app"
-                    prediction["tool_result"] = t_res.model_dump()
-                    return t_res.output
-
-            elif intent == "BROWSER_ACTION":
-                search_query = entities.get("search_query", command)
-                t_res = default_registry.execute("web_search", {"query": search_query})
-                prediction["executed_tool"] = "web_search"
-                prediction["tool_result"] = t_res.model_dump()
-                return f"Searching for {search_query}."
-
-            elif intent == "SYSTEM_CONTROL":
-                action = entities.get("action", "status")
-                value = entities.get("value")
-                t_res = default_registry.execute("system_control", {"action": action, "value": value})
-                prediction["executed_tool"] = "system_control"
-                prediction["tool_result"] = t_res.model_dump()
-                return t_res.output
-
-            elif intent == "SYSTEM_INFO":
-                targets = entities.get("metric_targets", [])
-                filter_name = "all"
-                if "battery" in targets:
-                    filter_name = "battery"
-                elif "ram" in targets or "memory" in targets:
-                    filter_name = "memory"
-                elif "cpu" in targets:
-                    filter_name = "cpu"
-                elif "disk" in targets or "storage" in targets:
-                    filter_name = "disk"
-                t_res = default_registry.execute("system_status", {"metric_filter": filter_name})
-                prediction["executed_tool"] = "system_status"
-                prediction["tool_result"] = t_res.model_dump()
-                return t_res.output
-
-            elif intent == "FILE_SEARCH":
-                target = entities.get("file_name", entities.get("file_query", ""))
-                if target:
-                    t_res = default_registry.execute("search_files", {"query": target})
-                    prediction["executed_tool"] = "search_files"
-                    prediction["tool_result"] = t_res.model_dump()
-                    return t_res.output
-                return "File search ke liye naam specify karein."
-
-            elif intent == "REMINDER":
-                title = entities.get("title") or command
-                time_exp = entities.get("time_expression", "")
-                due_seconds = entities.get("due_seconds")
-                t_res = default_registry.execute("set_reminder", {
-                    "title": title,
-                    "due_seconds": due_seconds,
-                    "time_expression": time_exp,
-                })
-                prediction["executed_tool"] = "set_reminder"
-                prediction["tool_result"] = t_res.model_dump()
-                return t_res.output
-
-            elif intent in ("AI_CHAT", "UNKNOWN_INTENT"):
-                ans = gemini_service.ask(command)
-                prediction["executed_tool"] = "gemini_service"
-                prediction["tool_result"] = {"status": "success", "answer": ans}
-                return ans
-
-            else:
-                intent_name = prediction.get("intent")
-                return f"Command samajh gaya: {intent_name}."
-
-        except Exception as ex:
-            logger.error("Error executing voice action for intent '%s': %s", intent, ex)
-            return f"{intent} command process karte waqt issue aaya."
+        return live_response
 
     def start_hands_free(self) -> bool:
         """Starts the continuous hands-free wake word listening loop."""

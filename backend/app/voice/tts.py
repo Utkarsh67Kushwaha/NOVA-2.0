@@ -8,13 +8,24 @@ logger = logging.getLogger("nova.voice.tts")
 
 
 class TextToSpeechService:
-    """Local, offline speech synthesis service using pyttsx3 (SAPI5) with a persistent worker thread."""
+    """Local, offline speech synthesis service using pyttsx3 (SAPI5) with a persistent worker thread.
+
+    Architecture notes:
+    - A single background thread owns the SAPI5 COM engine for its entire lifetime.
+    - `speak(blocking=False)` enqueues text and returns in <1ms (keeps HTTP path fast).
+    - `speak(blocking=True)` waits for the utterance to finish (used in hands-free loop
+      so the microphone does not pick up NOVA's own voice before recording user input).
+    - `stop()` signals the worker via `_stop_event` so the *current* utterance is
+      cancelled on the same engine — avoids the previous bug where a fresh pyttsx3.init()
+      was called on a different engine instance that had no effect on playback.
+    """
 
     def __init__(self, rate: int = 190, volume: float = 1.0):
         self.rate = rate
         self.volume = volume
         self.is_speaking = False
         self._queue: queue.Queue = queue.Queue()
+        self._stop_event = threading.Event()
         self._worker_thread = threading.Thread(
             target=self._worker_loop,
             daemon=True,
@@ -40,6 +51,14 @@ class TextToSpeechService:
                     break
                 text, done_event = item
 
+                # Skip utterance if stop was requested while it was queued
+                if self._stop_event.is_set():
+                    self._stop_event.clear()
+                    if done_event is not None:
+                        done_event.set()
+                    self._queue.task_done()
+                    continue
+
                 self.is_speaking = True
                 try:
                     if engine is None:
@@ -53,6 +72,7 @@ class TextToSpeechService:
                     logger.error("TTS speech error: %s", exc)
                 finally:
                     self.is_speaking = False
+                    self._stop_event.clear()
                     if done_event is not None:
                         done_event.set()
                     self._queue.task_done()
@@ -60,7 +80,14 @@ class TextToSpeechService:
                 logger.error("Error in TTS worker: %s", e)
 
     def speak(self, text: str, blocking: bool = False) -> None:
-        """Speaks text using local TTS. Non-blocking by default to eliminate HTTP latency."""
+        """Enqueues text for speech synthesis.
+
+        Args:
+            text: Text to speak. Empty/whitespace strings are silently ignored.
+            blocking: If True, waits up to 8 s for the utterance to complete.
+                      Always pass False on the FastAPI request path to avoid
+                      blocking the event loop.
+        """
         if not text or not text.strip():
             return
 
@@ -70,22 +97,34 @@ class TextToSpeechService:
             done_event.wait(timeout=8.0)
 
     def stop(self) -> None:
-        """Stops current speech output (interruption support)."""
+        """Signals the persistent worker to skip/stop the current utterance.
+
+        Sets `_stop_event` so the worker's finally-block skips the current item,
+        then drains any queued items. The same COM engine instance handles the
+        stop — fixing the previous bug where `pyttsx3.init()` was called here on
+        a different engine object that had no effect on the playing audio.
+        """
+        self._stop_event.set()
         self.is_speaking = False
-        # Clear queue
+        # Drain pending queue items
+        drained = 0
         while not self._queue.empty():
             try:
-                self._queue.get_nowait()
+                item = self._queue.get_nowait()
+                # Wake any blocked done_event so callers aren't stuck
+                if item is not None:
+                    _, done_ev = item
+                    if done_ev is not None:
+                        done_ev.set()
                 self._queue.task_done()
+                drained += 1
             except Exception:
                 break
-        try:
-            e = pyttsx3.init()
-            e.stop()
-            logger.info("TTS output stopped.")
-        except Exception as exc:
-            logger.debug("Error while stopping TTS: %s", exc)
+        if drained:
+            logger.debug("TTS queue drained (%d items discarded).", drained)
+        logger.info("TTS output stop signal sent.")
 
 
 # Singleton instance
 tts_service = TextToSpeechService(rate=190, volume=1.0)
+

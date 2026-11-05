@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -12,6 +13,7 @@ from backend.app.core.config import settings
 from backend.app.core.logger import logger
 from backend.app.services.intent_service import intent_service
 from backend.app.services.gemini_service import gemini_service
+from backend.app.services.dispatcher import dispatch_intent
 from backend.app.tools import default_registry
 from backend.app.system.hardware_controller import hardware_controller
 from backend.app.reminders.scheduler import reminder_scheduler
@@ -116,120 +118,22 @@ async def process_command(request: CommandRequest) -> Dict[str, Any]:
     prediction["latency_ms"] = latency_ms
 
     intent = prediction.get("intent")
-    entities = prediction.get("entities", {})
-    live_response = None
-    executed_tool = None
-    tool_result = None
 
-    if intent == "SYSTEM_CONTROL":
-        action = entities.get("action", "status")
-        value = entities.get("value")
-        t_res = default_registry.execute("system_control", {"action": action, "value": value})
-        executed_tool = "system_control"
-        tool_result = t_res.model_dump()
-        live_response = t_res.output
+    # AI_CHAT / UNKNOWN_INTENT: run Gemini in a thread-pool executor so the
+    # async FastAPI event loop is never blocked (fixes 6-second async stall bug).
+    if intent in ("AI_CHAT", "UNKNOWN_INTENT"):
+        loop = asyncio.get_event_loop()
+        live_response = await loop.run_in_executor(None, gemini_service.ask, request.text)
+        prediction["live_response"] = live_response
+        prediction["executed_tool"] = "gemini_service"
+        prediction["tool_result"] = {"status": "success", "answer": live_response}
+        prediction["needs_clarification"] = False
+    else:
+        # All other intents: synchronous dispatch via the shared dispatcher module.
+        # This eliminates the DRY violation between routes.py and voice_manager.py.
+        dispatch_intent(prediction, request.text)
 
-    elif intent == "SYSTEM_INFO":
-        targets = entities.get("metric_targets", [])
-        filter_name = "all"
-        if "battery" in targets:
-            filter_name = "battery"
-        elif "ram" in targets or "memory" in targets:
-            filter_name = "memory"
-        elif "cpu" in targets:
-            filter_name = "cpu"
-        elif "disk" in targets or "storage" in targets:
-            filter_name = "disk"
-
-        t_res = default_registry.execute("system_status", {"metric_filter": filter_name})
-        executed_tool = "system_status"
-        tool_result = t_res.model_dump()
-        live_response = t_res.output
-
-    elif intent == "OPEN_APP":
-        app_name = entities.get("app_name")
-        if app_name in ("sc", "screenshot", "snippingtool"):
-            t_res = default_registry.execute("take_screenshot", {})
-            executed_tool = "take_screenshot"
-            tool_result = t_res.model_dump()
-            live_response = t_res.output
-        elif app_name:
-            t_res = default_registry.execute("launch_app", {"app_name": app_name})
-            executed_tool = "launch_app"
-            tool_result = t_res.model_dump()
-            live_response = t_res.output
-        else:
-            live_response = "App launch intent detected, but no specific app name recognized."
-
-    elif intent == "BROWSER_ACTION":
-        search_query = entities.get("search_query", request.text)
-        t_res = default_registry.execute("web_search", {"query": search_query})
-        executed_tool = "web_search"
-        tool_result = t_res.model_dump()
-        live_response = t_res.output
-
-    elif intent == "FILE_SEARCH":
-        target = entities.get("file_name", entities.get("file_query", ""))
-        if target:
-            t_res = default_registry.execute("search_files", {"query": target})
-            executed_tool = "search_files"
-            tool_result = t_res.model_dump()
-            live_response = t_res.output
-        else:
-            live_response = "File search intent detected. Please specify a file name or extension."
-
-    elif intent == "PLAY_MUSIC":
-        action = entities.get("action", "play")
-        if action in ("pause", "stop"):
-            t_res = default_registry.execute("media_control", {"action": "pause"})
-            executed_tool = "media_control"
-            tool_result = t_res.model_dump()
-            live_response = "Media playback paused."
-        elif action in ("resume", "continue"):
-            t_res = default_registry.execute("media_control", {"action": "resume"})
-            executed_tool = "media_control"
-            tool_result = t_res.model_dump()
-            live_response = "Media playback resumed."
-        elif action == "next":
-            t_res = default_registry.execute("media_control", {"action": "next"})
-            executed_tool = "media_control"
-            tool_result = t_res.model_dump()
-            live_response = "Skipped to next track."
-        elif action == "previous":
-            t_res = default_registry.execute("media_control", {"action": "previous"})
-            executed_tool = "media_control"
-            tool_result = t_res.model_dump()
-            live_response = "Returned to previous track."
-        else:
-            track = entities.get("track_or_query", "music")
-            t_res = default_registry.execute("play_music", {"track": track})
-            executed_tool = "play_music"
-            tool_result = t_res.model_dump()
-            live_response = f"Opening '{track}' in Google Chrome."
-
-    elif intent == "REMINDER":
-        title = entities.get("title") or request.text
-        time_exp = entities.get("time_expression", "")
-        due_seconds = entities.get("due_seconds")
-        t_res = default_registry.execute("set_reminder", {
-            "title": title,
-            "due_seconds": due_seconds,
-            "time_expression": time_exp,
-        })
-        executed_tool = "set_reminder"
-        tool_result = t_res.model_dump()
-        live_response = t_res.output
-
-    elif intent in ("AI_CHAT", "UNKNOWN_INTENT"):
-        live_response = gemini_service.ask(request.text)
-        executed_tool = "gemini_service"
-        tool_result = {"status": "success", "answer": live_response}
-
-    prediction["live_response"] = live_response
-    prediction["executed_tool"] = executed_tool
-    prediction["tool_result"] = tool_result
-    prediction["needs_clarification"] = False
-
+    executed_tool = prediction.get("executed_tool")
     logger.info(
         "Intent: %s (Confidence: %s%%, Latency: %sms, ExecutedTool: %s)",
         intent,
