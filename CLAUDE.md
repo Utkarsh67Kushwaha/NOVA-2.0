@@ -1,0 +1,104 @@
+# NOVA 2.0 — System Architecture & Agent Guide
+
+> **Context Optimization**: This file is engineered to give Claude and AI agents complete working knowledge of NOVA 2.0 in ~1,200 tokens.
+
+---
+
+## 1. High-Level Summary
+NOVA 2.0 is an ultra-fast, privacy-first desktop AI assistant on Windows. It combines an Electron + React (TypeScript) shell with a local Python FastAPI backend, Faster-Whisper voice transcription, an ML intent engine with Alexa-grade direct rules, Windows hardware controls, and a persistent background TTS worker.
+
+---
+
+## 2. Tech Stack & Key Libraries
+- **Backend**: Python 3.13, FastAPI, Uvicorn, Faster-Whisper (greedy decoding, 6 threads), WebRTC-VAD + SoundDevice, pyttsx3 (threaded SAPI5 worker), scikit-learn (TF-IDF + MultinomialNB), PyAutoGUI, ctypes (Windows User32 API).
+- **Frontend**: Electron 34, React 18, Vite 6 (`strictPort: 5173`), TypeScript 5.7, Tailwind CSS 3.4, Lucide React icons.
+- **Environment**: Windows 11, PowerShell, local `.venv` in root.
+
+---
+
+## 3. Directory Layout & Key Modules
+```text
+NOVA 2.0/
+├── CLAUDE.md                     # Agent briefing & architectural guide (this file)
+├── backend/
+│   ├── app/
+│   │   ├── main.py               # FastAPI entrypoint, lifespan startup/shutdown, pre-warm
+│   │   ├── api/routes.py         # HTTP endpoints: /api/command, /api/voice/*, /api/tools/*
+│   │   ├── services/
+│   │   │   ├── intent_service.py # ML classifier (8 intents) + Rule 0/0.1/0.2/0.5/Media fast-paths
+│   │   │   ├── safe_tools.py     # Windows hardware: apps, media keys, volume, brightness, lock, screenshot
+│   │   │   └── gemini_service.py # Conversational AI fallback + offline time/date/jokes handler
+│   │   ├── voice/
+│   │   │   ├── vad.py            # Energy + WebRTC VAD (silence_timeout_sec = 0.45s)
+│   │   │   ├── stt.py            # Faster-Whisper base (beam_size=1, cpu_threads=6, greedy)
+│   │   │   ├── tts.py            # Non-blocking pyttsx3 persistent COM background queue worker
+│   │   │   ├── wake_word.py      # Regex wake-word stripper ("hey nova", "nova", "suno")
+│   │   │   └── voice_manager.py  # Audio pipeline orchestrator (VAD -> STT -> Intent -> TTS)
+│   │   └── reminders/
+│   │       ├── time_parser.py    # Natural language time parsing ("in 10 minutes", "at 5pm")
+│   │       └── reminder_service.py # Background reminder scheduler + file persistence
+│   ├── data/                     # ML training data & persistent reminders.json
+│   ├── models/                   # Serialized intent_classifier.pkl & evaluation report
+│   └── tests/                    # 83+ pytest tests (100% passing)
+├── frontend/
+│   ├── electron/main.ts          # Electron window manager, IPC handlers, dev server watcher
+│   ├── src/
+│   │   ├── App.tsx               # Primary dashboard: live mic, tool feed, voice visualizer
+│   │   └── services/api.ts       # Frontend HTTP client communicating with backend:8000
+│   └── package.json              # Scripts: dev (concurrent Vite + Electron), dev:renderer
+└── scripts/
+    ├── start_backend.ps1         # Launches backend on port 8000 with virtualenv check
+    └── start_desktop.ps1         # Cleans port 8000, starts backend + Electron window
+```
+
+---
+
+## 4. Essential Commands
+Run all commands from repository root: `c:\Users\utkar\OneDrive\Desktop\NOVA 2.0`
+
+| Action | PowerShell Command |
+| :--- | :--- |
+| **Run Full Desktop App** | `npm --prefix frontend run dev` *(starts Vite + Electron)* |
+| **Run Backend Only** | `.\.venv\Scripts\python.exe -m backend.app.main` *(port 8000)* |
+| **Run Frontend Web Only** | `npm --prefix frontend run dev:renderer` *(browser on :5173)* |
+| **Run Pytest Suite** | `.\.venv\Scripts\python.exe -m pytest backend/tests` *(83 tests)* |
+| **Build Frontend** | `npm --prefix frontend run build` |
+| **Free Port 8000** | `Get-NetTCPConnection -LocalPort 8000 -EA 0 \| % { Stop-Process -Id $_.OwningProcess -Force }` |
+| **Free Port 5173** | `Get-NetTCPConnection -LocalPort 5173 -EA 0 \| % { Stop-Process -Id $_.OwningProcess -Force }` |
+
+---
+
+## 5. Intent System & Fast-Path Rules
+The intent engine in `backend/app/services/intent_service.py` operates in priority order:
+1. **Rule 0 (Direct Single-Word Apps)**: `"calc"`, `"notepad"`, `"chrome"`, `"spotify"`, `"vscode"`, `"code"`, `"terminal"`, `"camera"`, `"paint"`, `"settings"` $\rightarrow$ `OPEN_APP`.
+2. **Rule 0.1 (Direct Mute/Unmute)**: `"mute"`, `"unmute"` $\rightarrow$ `SYSTEM_CONTROL`.
+3. **Rule 0.2 (System Diagnostics & Info)**: `"battery"`, `"time"`, `"date"`, `"weather"` $\rightarrow$ `SYSTEM_INFO` / `AI_CHAT`.
+4. **Rule 0.5 (Apps with Verbs)**: `"{verb} {app}"` / `"{app} {verb}"` $\rightarrow$ `OPEN_APP`.
+5. **Rule 0.6 (Screenshot)**: `"screenshot"`, `"sc"`, `"sc le lo"`, `"screen capture"`, `"desktop photo"` $\rightarrow$ `OPEN_APP` (app_name: "screenshot").
+6. **Rule Hardware & Media Transport**:
+   - Pause/Stop: `"chup"`, `"chup ho"`, `"ruk jao"`, `"pause"`, `"stop"`, `"band karo"`.
+   - Play/Resume: `"bhai gaana chala de"`, `"gaana bajao"`, `"play"`, `"resume"` (resumes playback if no song name specified; searches & plays if track name given).
+   - Track Navigation: `"next"`, `"skip"`, `"previous"`, `"prev"`.
+   - Volume & Brightness: `"volume 50%"`, `"awaz badhao"`, `"light kam karo"`.
+   - Power & Security: `"lock"`, `"pc lock karo"`, `"sleep"`.
+7. **ML Vectorizer & Naive Bayes**: Used for all complex/multimodal desktop tasks.
+8. **Clarification Barrier Removed**: `needs_clarification` is forced `False` so commands execute without stalling.
+
+---
+
+## 6. Voice Engine & Latency Optimization Pipeline
+- **Wake Word Detection**: Regex `\b(?:hey\s+|ok\s+|hello\s+|hi\s+|arey\s+|oye\s+|suno\s+)?(?:nova|noah|noba|knower)\b` strips wake words regardless of position.
+- **VAD**: `vad.py` uses `silence_timeout_sec = 0.45` and `energy_threshold = 0.0009`. When user stops talking, capture ends in 450ms.
+- **Audio Trimming**: Only the trimmed speech slice (`final_speech_audio`) is passed to STT, never raw multi-second room silence.
+- **STT (Faster-Whisper)**: Greedy decoding (`beam_size=1`, `best_of=1`, `cpu_threads=6`, `temperature=0.0`) runs inference in ~1.1s. Pre-warmed at server boot.
+- **TTS (pyttsx3)**: Runs on dedicated `NOVA-TTS-Worker` background thread. `tts.speak(..., blocking=False)` ensures API HTTP responses return in `< 50ms` while speech plays asynchronously.
+
+---
+
+## 7. Critical Architectural Constraints for AI Agents
+1. **Never block the API thread on TTS**: Always pass `blocking=False` in `tts.speak()`.
+2. **Never add artificial confirmation/clarification dialogs** for common user intents.
+3. **Preserve VAD silence timeout at ~0.45s**: Increasing this re-introduces latency.
+4. **Windows Pathing**: Always handle Windows backslashes with raw strings `r"..."` or `Path()`.
+5. **Always preserve 83/83 pytest tests**: Run `.\.venv\Scripts\python.exe -m pytest backend/tests` after any backend change.
+6. **Port Integrity**: Frontend is locked to port `5173` (`strictPort: true` in `vite.config.ts`), and backend is locked to `8000`. Do not change these ports.
