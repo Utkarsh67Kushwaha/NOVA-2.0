@@ -130,6 +130,17 @@ export interface AuditRecord {
   timestamp: string;
 }
 
+export interface ReminderItem {
+  id: string;
+  title: string;
+  due_timestamp: number;
+  due_at_iso: string;
+  created_at_iso: string;
+  status: 'PENDING' | 'TRIGGERED' | 'CANCELLED';
+  repeat: 'NONE' | 'DAILY';
+  source: string;
+}
+
 export interface NovaIPCBridge {
   ping: () => Promise<string>;
   getLoginItemSettings: () => Promise<boolean>;

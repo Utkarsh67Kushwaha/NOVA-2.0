@@ -16,6 +16,8 @@ from backend.app.tools.desktop_tools import (
     TakeScreenshotTool,
     MediaControlTool,
     SystemControlTool,
+    SetReminderTool,
+    ListRemindersTool,
 )
 from backend.app.tools.browser_tools import OpenUrlTool, WebSearchTool, PlayMusicTool
 from backend.app.tools.file_tools import (
@@ -35,6 +37,8 @@ def setup_default_tools(registry: ToolRegistry = default_registry) -> ToolRegist
     registry.register(TakeScreenshotTool())
     registry.register(MediaControlTool())
     registry.register(SystemControlTool())
+    registry.register(SetReminderTool())
+    registry.register(ListRemindersTool())
 
     # Browser tools
     registry.register(OpenUrlTool())

@@ -13,6 +13,7 @@ import time
 from typing import Any, Dict, List, Optional
 import psutil
 
+from backend.app.reminders.scheduler import reminder_scheduler
 from backend.app.tools.base import (
     BaseTool,
     RiskLevel,
@@ -736,4 +737,129 @@ class SystemControlTool(BaseTool):
             method="hardware_state_verification",
             details=f"System control action '{action}' verified via Windows APIs.",
             metrics=data,
+        )
+
+
+class SetReminderTool(BaseTool):
+    """Safe tool to schedule a desktop reminder / alarm with native Windows toast notification."""
+
+    def __init__(self):
+        super().__init__(
+            name="set_reminder",
+            description="Schedules a native Windows reminder/alarm that triggers a toast notification and audio alert when due.",
+            category="desktop",
+            risk_level=RiskLevel.LOW_RISK,
+        )
+
+    def get_parameters_schema(self) -> List[ToolParamSchema]:
+        return [
+            ToolParamSchema(
+                name="title",
+                type="string",
+                description="The reminder task or message (e.g. 'Drink water', 'Call manager', 'Meeting')",
+                required=True,
+            ),
+            ToolParamSchema(
+                name="due_seconds",
+                type="integer",
+                description="Duration in seconds from now when the reminder should trigger (e.g. 10, 300, 1800)",
+                required=False,
+            ),
+            ToolParamSchema(
+                name="time_expression",
+                type="string",
+                description="Natural language time expression (e.g. 'in 5 minutes', 'at 5:30 pm', '10 minute baad')",
+                required=False,
+            ),
+        ]
+
+    def execute(self, **kwargs: Any) -> ToolResult:
+        title = kwargs.get("title", "Quick Reminder")
+        due_seconds = kwargs.get("due_seconds")
+        time_expression = kwargs.get("time_expression")
+
+        item = reminder_scheduler.create_reminder(
+            title=title,
+            due_seconds=due_seconds,
+            time_expression=time_expression,
+            source="TOOL",
+        )
+
+        due_time_str = datetime.datetime.fromtimestamp(item.due_timestamp).strftime("%I:%M:%S %p")
+        diff_s = int(max(0, item.due_timestamp - time.time()))
+
+        output = f"Reminder scheduled: '{item.title}' at {due_time_str} (in {diff_s} seconds)."
+
+        result = ToolResult(
+            tool_name=self.name,
+            success=True,
+            output=output,
+            data=item.model_dump(),
+        )
+        result.verification = self.verify(result, reminder_id=item.id)
+        return result
+
+    def verify(self, result: ToolResult, **kwargs: Any) -> VerificationResult:
+        rem_id = kwargs.get("reminder_id", "")
+        active = [r for r in reminder_scheduler.get_active_reminders() if r.id == rem_id]
+        verified = len(active) > 0
+        return VerificationResult(
+            verified=verified,
+            method="scheduler_queue_check",
+            details=f"Reminder ID {rem_id} verified active in background scheduler." if verified else "Failed to verify in queue.",
+        )
+
+
+class ListRemindersTool(BaseTool):
+    """Tool to inspect active scheduled reminders."""
+
+    def __init__(self):
+        super().__init__(
+            name="list_reminders",
+            description="Lists all active or upcoming scheduled reminders in NOVA.",
+            category="desktop",
+            risk_level=RiskLevel.READ_ONLY,
+        )
+
+    def get_parameters_schema(self) -> List[ToolParamSchema]:
+        return [
+            ToolParamSchema(
+                name="active_only",
+                type="boolean",
+                description="Whether to list only pending reminders (default: True)",
+                required=False,
+                default=True,
+            ),
+        ]
+
+    def execute(self, **kwargs: Any) -> ToolResult:
+        active_only = kwargs.get("active_only", True)
+        if active_only:
+            items = reminder_scheduler.get_active_reminders()
+        else:
+            items = reminder_scheduler.get_all_reminders()
+
+        if not items:
+            output = "No pending reminders found."
+        else:
+            lines = []
+            for r in items:
+                due_dt = datetime.datetime.fromtimestamp(r.due_timestamp).strftime("%I:%M:%S %p")
+                lines.append(f"• [{r.id}] '{r.title}' (Due: {due_dt}, Status: {r.status})")
+            output = f"Scheduled Reminders ({len(items)}):\n" + "\n".join(lines)
+
+        result = ToolResult(
+            tool_name=self.name,
+            success=True,
+            output=output,
+            data={"reminders": [r.model_dump() for r in items], "count": len(items)},
+        )
+        result.verification = self.verify(result)
+        return result
+
+    def verify(self, result: ToolResult, **kwargs: Any) -> VerificationResult:
+        return VerificationResult(
+            verified=True,
+            method="in_memory_read",
+            details="Reminders list fetched safely from scheduler.",
         )

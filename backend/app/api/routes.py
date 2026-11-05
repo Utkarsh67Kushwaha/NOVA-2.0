@@ -13,6 +13,8 @@ from backend.app.core.logger import logger
 from backend.app.services.intent_service import intent_service
 from backend.app.tools import default_registry
 from backend.app.system.hardware_controller import hardware_controller
+from backend.app.reminders.scheduler import reminder_scheduler
+from backend.app.reminders.reminder_model import ReminderCreate
 
 router = APIRouter()
 START_TIME = time.time()
@@ -179,8 +181,17 @@ async def process_command(request: CommandRequest) -> Dict[str, Any]:
         live_response = f"Opening '{track}' in Google Chrome."
 
     elif intent == "REMINDER":
+        title = entities.get("title") or request.text
         time_exp = entities.get("time_expression", "")
-        live_response = f"Reminder logged: '{request.text}' (Time: {time_exp or 'unspecified'})."
+        due_seconds = entities.get("due_seconds")
+        t_res = default_registry.execute("set_reminder", {
+            "title": title,
+            "due_seconds": due_seconds,
+            "time_expression": time_exp,
+        })
+        executed_tool = "set_reminder"
+        tool_result = t_res.model_dump()
+        live_response = t_res.output
 
     prediction["live_response"] = live_response
     prediction["executed_tool"] = executed_tool
@@ -205,3 +216,45 @@ async def get_ml_report() -> Dict[str, Any]:
 
     with open(report_file, "r", encoding="utf-8") as f:
         return json.load(f)
+
+
+@router.get("/api/reminders")
+async def get_reminders(active_only: bool = False) -> Dict[str, Any]:
+    """Returns active and recent reminders."""
+    if active_only:
+        items = reminder_scheduler.get_active_reminders()
+    else:
+        items = reminder_scheduler.get_all_reminders()
+    return {
+        "status": "success",
+        "reminders": [r.model_dump() for r in items],
+        "count": len(items),
+    }
+
+
+@router.post("/api/reminders")
+async def create_reminder_endpoint(payload: ReminderCreate) -> Dict[str, Any]:
+    """Creates a new scheduled reminder."""
+    item = reminder_scheduler.create_reminder(
+        title=payload.title,
+        due_seconds=payload.due_seconds,
+        time_expression=payload.time_expression,
+        due_at_iso=payload.due_at_iso,
+        source="REST_API",
+    )
+    return {
+        "status": "success",
+        "reminder": item.model_dump(),
+        "message": f"Reminder scheduled for '{item.title}'",
+    }
+
+
+@router.delete("/api/reminders/{reminder_id}")
+async def delete_reminder_endpoint(reminder_id: str) -> Dict[str, Any]:
+    """Cancels or deletes a reminder by ID."""
+    deleted = reminder_scheduler.delete_reminder(reminder_id)
+    return {
+        "status": "success" if deleted else "not_found",
+        "deleted": deleted,
+        "reminder_id": reminder_id,
+    }

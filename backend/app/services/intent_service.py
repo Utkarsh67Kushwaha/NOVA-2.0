@@ -189,13 +189,11 @@ class IntentClassifierService:
             entities["metric_targets"] = targets if targets else ["overview"]
 
         elif intent == "REMINDER":
-            # Extract time expression
-            time_match = re.search(
-                r"(\d{1,2}(?::\d{2})?\s*(?:am|pm|baje|hours?|minutes?|mins?))",
-                clean,
-            )
-            if time_match:
-                entities["time_expression"] = time_match.group(1)
+            from backend.app.reminders.time_parser import parse_time_expression
+            due_secs, clean_title, expr = parse_time_expression(clean)
+            entities["due_seconds"] = due_secs
+            entities["title"] = clean_title or "Reminder"
+            entities["time_expression"] = expr or "10 minutes" 
 
         return entities
 
@@ -347,6 +345,31 @@ class IntentClassifierService:
                 "entities": {"control_type": "brightness", "action": "adjust_brightness", "value": -15},
                 "model_name": "RulePriority-SystemControl",
                 "top_probabilities": {"SYSTEM_CONTROL": 0.98},
+            }
+
+        # 2.5 Reminder & Alarm commands
+        if any(p in clean for p in [
+            "remind me to", "remind me", "set a reminder", "set reminder", "reminder for",
+            "reminder set karo", "reminder lagao", "ka reminder lagao", "mujhe yaad dilao",
+            "yaad dilana", "alarm set karo", "alarm lagao"
+        ]):
+            from backend.app.reminders.time_parser import parse_time_expression
+            due_secs, clean_title, expr = parse_time_expression(clean)
+            return {
+                "query": text,
+                "intent": "REMINDER",
+                "raw_intent": "REMINDER",
+                "confidence": 0.98,
+                "confidence_percent": 98.0,
+                "threshold": self.confidence_threshold,
+                "needs_clarification": False,
+                "entities": {
+                    "title": clean_title or "Reminder",
+                    "due_seconds": due_secs,
+                    "time_expression": expr or "10 minutes",
+                },
+                "model_name": "RulePriority-Reminder",
+                "top_probabilities": {"REMINDER": 0.98},
             }
 
         # 3. Security & Power Lock commands
