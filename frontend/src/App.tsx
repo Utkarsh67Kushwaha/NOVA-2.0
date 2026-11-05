@@ -52,6 +52,9 @@ const SAMPLE_COMMANDS = [
   'spotify kholo please',
   'battery kitne percent bachi hai',
   'play lofi beats for focus',
+  'volume 50 percent karo',
+  'brightness 70 kar do',
+  'pc lock karo',
   'downloads me resume.pdf dhoondo',
   'remind me to drink water at 5pm',
   'summarize this uploaded pdf report',
@@ -764,6 +767,30 @@ export default function App(): React.JSX.Element {
               >
                 <Camera className="w-3.5 h-3.5 text-cyan-400" />
                 📸 Take Screenshot (SC)
+              </button>
+
+              <button
+                onClick={() => handleExecuteTool('system_control', { action: 'set_volume', value: 50 })}
+                disabled={isExecutingTool}
+                className="px-3 py-1.5 rounded-lg bg-nova-card hover:bg-slate-700 text-xs font-semibold text-slate-200 border border-nova-border flex items-center gap-1.5 transition"
+              >
+                🔊 Volume 50%
+              </button>
+
+              <button
+                onClick={() => handleExecuteTool('system_control', { action: 'set_brightness', value: 70 })}
+                disabled={isExecutingTool}
+                className="px-3 py-1.5 rounded-lg bg-nova-card hover:bg-slate-700 text-xs font-semibold text-slate-200 border border-nova-border flex items-center gap-1.5 transition"
+              >
+                🔆 Brightness 70%
+              </button>
+
+              <button
+                onClick={() => handleExecuteTool('system_control', { action: 'lock_workstation' })}
+                disabled={isExecutingTool}
+                className="px-3 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-xs font-semibold text-amber-300 border border-amber-500/30 flex items-center gap-1.5 transition"
+              >
+                🔒 Lock PC
               </button>
 
               <button

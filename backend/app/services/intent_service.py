@@ -218,6 +218,152 @@ class IntentClassifierService:
                 "clarification_message": "Command was empty. Please provide a command.",
             }
 
+        # Rule priority for Hardware & System Controls (Volume, Brightness, Lock)
+        # 1. Volume commands
+        vol_set_match = re.search(
+            r"\b(?:volume|sound|aawaz)\s+(?:ko\s+)?(\d{1,3})\s*(?:%|percent)?(?:\s*(?:pe|par|karo|set|kar do))?\b",
+            clean,
+        ) or re.search(
+            r"\b(?:set\s+)?(?:volume|sound|aawaz)\s+(?:to\s+)?(\d{1,3})\s*(?:%|percent)?\b",
+            clean,
+        )
+        if vol_set_match:
+            val = int(vol_set_match.group(1))
+            return {
+                "query": text,
+                "intent": "SYSTEM_CONTROL",
+                "raw_intent": "SYSTEM_CONTROL",
+                "confidence": 0.98,
+                "confidence_percent": 98.0,
+                "threshold": self.confidence_threshold,
+                "needs_clarification": False,
+                "entities": {"control_type": "volume", "action": "set_volume", "value": val},
+                "model_name": "RulePriority-SystemControl",
+                "top_probabilities": {"SYSTEM_CONTROL": 0.98},
+            }
+
+        if any(p in clean for p in ["volume badhao", "volume up", "sound badhao", "volume increase", "aawaz badhao", "volume thoda badhao"]):
+            return {
+                "query": text,
+                "intent": "SYSTEM_CONTROL",
+                "raw_intent": "SYSTEM_CONTROL",
+                "confidence": 0.98,
+                "confidence_percent": 98.0,
+                "threshold": self.confidence_threshold,
+                "needs_clarification": False,
+                "entities": {"control_type": "volume", "action": "adjust_volume", "value": 15},
+                "model_name": "RulePriority-SystemControl",
+                "top_probabilities": {"SYSTEM_CONTROL": 0.98},
+            }
+
+        if any(p in clean for p in ["volume kam karo", "volume down", "sound kam karo", "volume decrease", "aawaz kam karo", "volume thoda kam karo"]):
+            return {
+                "query": text,
+                "intent": "SYSTEM_CONTROL",
+                "raw_intent": "SYSTEM_CONTROL",
+                "confidence": 0.98,
+                "confidence_percent": 98.0,
+                "threshold": self.confidence_threshold,
+                "needs_clarification": False,
+                "entities": {"control_type": "volume", "action": "adjust_volume", "value": -15},
+                "model_name": "RulePriority-SystemControl",
+                "top_probabilities": {"SYSTEM_CONTROL": 0.98},
+            }
+
+        if any(p in clean for p in ["unmute system", "unmute audio", "unmute sound", "unmute karo", "unmute kar do", "unmute"]):
+            return {
+                "query": text,
+                "intent": "SYSTEM_CONTROL",
+                "raw_intent": "SYSTEM_CONTROL",
+                "confidence": 0.98,
+                "confidence_percent": 98.0,
+                "threshold": self.confidence_threshold,
+                "needs_clarification": False,
+                "entities": {"control_type": "volume", "action": "unmute", "value": None},
+                "model_name": "RulePriority-SystemControl",
+                "top_probabilities": {"SYSTEM_CONTROL": 0.98},
+            }
+
+        if any(p in clean for p in ["mute system", "mute audio", "system mute", "mute sound", "volume mute", "mute kar do", "mute karo"]):
+            return {
+                "query": text,
+                "intent": "SYSTEM_CONTROL",
+                "raw_intent": "SYSTEM_CONTROL",
+                "confidence": 0.98,
+                "confidence_percent": 98.0,
+                "threshold": self.confidence_threshold,
+                "needs_clarification": False,
+                "entities": {"control_type": "volume", "action": "mute", "value": None},
+                "model_name": "RulePriority-SystemControl",
+                "top_probabilities": {"SYSTEM_CONTROL": 0.98},
+            }
+
+        # 2. Brightness commands
+        bright_set_match = re.search(
+            r"\b(?:brightness|screen\s+light|screen\s+brightness)\s+(?:ko\s+)?(\d{1,3})\s*(?:%|percent)?(?:\s*(?:pe|par|karo|set|kar do))?\b",
+            clean,
+        ) or re.search(
+            r"\b(?:set\s+)?(?:brightness|screen\s+light)\s+(?:to\s+)?(\d{1,3})\s*(?:%|percent)?\b",
+            clean,
+        )
+        if bright_set_match:
+            val = int(bright_set_match.group(1))
+            return {
+                "query": text,
+                "intent": "SYSTEM_CONTROL",
+                "raw_intent": "SYSTEM_CONTROL",
+                "confidence": 0.98,
+                "confidence_percent": 98.0,
+                "threshold": self.confidence_threshold,
+                "needs_clarification": False,
+                "entities": {"control_type": "brightness", "action": "set_brightness", "value": val},
+                "model_name": "RulePriority-SystemControl",
+                "top_probabilities": {"SYSTEM_CONTROL": 0.98},
+            }
+
+        if any(p in clean for p in ["brightness badhao", "brightness up", "screen light badhao", "increase brightness", "brightness increase"]):
+            return {
+                "query": text,
+                "intent": "SYSTEM_CONTROL",
+                "raw_intent": "SYSTEM_CONTROL",
+                "confidence": 0.98,
+                "confidence_percent": 98.0,
+                "threshold": self.confidence_threshold,
+                "needs_clarification": False,
+                "entities": {"control_type": "brightness", "action": "adjust_brightness", "value": 15},
+                "model_name": "RulePriority-SystemControl",
+                "top_probabilities": {"SYSTEM_CONTROL": 0.98},
+            }
+
+        if any(p in clean for p in ["brightness kam karo", "brightness down", "screen light kam karo", "decrease brightness", "brightness decrease"]):
+            return {
+                "query": text,
+                "intent": "SYSTEM_CONTROL",
+                "raw_intent": "SYSTEM_CONTROL",
+                "confidence": 0.98,
+                "confidence_percent": 98.0,
+                "threshold": self.confidence_threshold,
+                "needs_clarification": False,
+                "entities": {"control_type": "brightness", "action": "adjust_brightness", "value": -15},
+                "model_name": "RulePriority-SystemControl",
+                "top_probabilities": {"SYSTEM_CONTROL": 0.98},
+            }
+
+        # 3. Security & Power Lock commands
+        if any(p in clean for p in ["lock pc", "pc lock karo", "lock my pc", "lock computer", "computer lock karo", "lock workstation", "system lock karo"]):
+            return {
+                "query": text,
+                "intent": "SYSTEM_CONTROL",
+                "raw_intent": "SYSTEM_CONTROL",
+                "confidence": 0.98,
+                "confidence_percent": 98.0,
+                "threshold": self.confidence_threshold,
+                "needs_clarification": False,
+                "entities": {"control_type": "power", "action": "lock_workstation", "value": None},
+                "model_name": "RulePriority-SystemControl",
+                "top_probabilities": {"SYSTEM_CONTROL": 0.98},
+            }
+
         # Rule priority for hardware media transport control commands
         media_pause_patterns = {
             "stop", "pause", "pause the song", "pause music", "stop music", "stop the song",

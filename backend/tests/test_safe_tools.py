@@ -204,3 +204,33 @@ def test_api_command_intent_tool_routing():
     assert data["executed_tool"] == "system_status"
     assert data["tool_result"]["success"] is True
     assert "Battery" in data["live_response"]
+
+
+
+def test_system_control_hardware_tool():
+    """Verify system_control safe tool executes volume, brightness and status actions."""
+    # Test status
+    res = client.post(
+        "/api/tools/execute",
+        json={"tool_name": "system_control", "args": {"action": "status"}},
+    )
+    assert res.status_code == 200
+    data = res.json()["result"]
+    assert data["success"] is True
+    assert "Volume" in data["output"]
+
+    # Test set_volume
+    res_vol = client.post(
+        "/api/tools/execute",
+        json={"tool_name": "system_control", "args": {"action": "set_volume", "value": 75}},
+    )
+    assert res_vol.status_code == 200
+    assert "75%" in res_vol.json()["result"]["output"]
+
+    # Test command routing for volume
+    res_cmd = client.post("/api/command", json={"text": "volume 60 percent karo"})
+    assert res_cmd.status_code == 200
+    cmd_data = res_cmd.json()
+    assert cmd_data["intent"] == "SYSTEM_CONTROL"
+    assert cmd_data["executed_tool"] == "system_control"
+    assert "60%" in cmd_data["live_response"]

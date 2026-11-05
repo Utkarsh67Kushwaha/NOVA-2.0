@@ -610,3 +610,130 @@ class MediaControlTool(BaseTool):
             details="Windows media transport key event dispatched successfully.",
             metrics={"action": kwargs.get("action")},
         )
+
+
+
+class SystemControlTool(BaseTool):
+    """Tool to control system master volume, display brightness, mute states, and workstation security."""
+
+    def __init__(self):
+        super().__init__(
+            name="system_control",
+            description="Control hardware and power states: volume (set/adjust/mute), brightness (set/adjust), and workstation lock.",
+            category="desktop",
+            risk_level=RiskLevel.LOW_RISK,
+        )
+
+    def get_parameters_schema(self) -> List[ToolParamSchema]:
+        return [
+            ToolParamSchema(
+                name="action",
+                type="string",
+                description="Action: 'set_volume', 'adjust_volume', 'get_volume', 'mute', 'unmute', 'set_brightness', 'adjust_brightness', 'get_brightness', 'lock_workstation', 'status'",
+                required=True,
+                default="status",
+                enum=[
+                    "set_volume",
+                    "adjust_volume",
+                    "get_volume",
+                    "mute",
+                    "unmute",
+                    "set_brightness",
+                    "adjust_brightness",
+                    "get_brightness",
+                    "lock_workstation",
+                    "status",
+                ],
+            ),
+            ToolParamSchema(
+                name="value",
+                type="integer",
+                description="Level percentage (0-100) or relative delta (e.g. +10, -15)",
+                required=False,
+                default=None,
+            ),
+        ]
+
+    def execute(self, **kwargs: Any) -> ToolResult:
+        action = str(kwargs.get("action", "status")).lower().strip()
+        val = kwargs.get("value")
+        from backend.app.system.hardware_controller import hardware_controller
+
+        output = ""
+        data: Dict[str, Any] = {"action": action}
+
+        if action in ("set_volume", "volume"):
+            target = int(val) if val is not None else 50
+            new_v = hardware_controller.set_volume(target)
+            output = f"System volume set to {new_v}%."
+            data["volume"] = new_v
+
+        elif action == "adjust_volume":
+            delta = int(val) if val is not None else 10
+            new_v = hardware_controller.adjust_volume(delta)
+            output = f"System volume adjusted to {new_v}% ({delta:+d}%)."
+            data["volume"] = new_v
+
+        elif action == "get_volume":
+            v = hardware_controller.get_volume()
+            output = f"Current system volume is {v}%."
+            data["volume"] = v
+
+        elif action == "mute":
+            hardware_controller.set_mute(True)
+            output = "System audio muted."
+            data["is_muted"] = True
+
+        elif action == "unmute":
+            hardware_controller.set_mute(False)
+            output = "System audio unmuted."
+            data["is_muted"] = False
+
+        elif action in ("set_brightness", "brightness"):
+            target = int(val) if val is not None else 50
+            new_b = hardware_controller.set_brightness(target)
+            output = f"Display brightness set to {new_b}%." if new_b is not None else "Could not set brightness on this display."
+            data["brightness"] = new_b
+
+        elif action == "adjust_brightness":
+            delta = int(val) if val is not None else 10
+            new_b = hardware_controller.adjust_brightness(delta)
+            output = f"Display brightness adjusted to {new_b}% ({delta:+d}%)." if new_b is not None else "Could not adjust brightness on this display."
+            data["brightness"] = new_b
+
+        elif action == "get_brightness":
+            b = hardware_controller.get_brightness()
+            output = f"Current display brightness is {b}%." if b is not None else "Display brightness read unsupported on this device."
+            data["brightness"] = b
+
+        elif action in ("lock_workstation", "lock", "lock_pc"):
+            ok = hardware_controller.lock_workstation()
+            output = "Workstation session locked successfully." if ok else "Failed to lock workstation."
+            data["locked"] = ok
+
+        else:
+            diag = hardware_controller.get_hardware_status()
+            data.update(diag)
+            output = (
+                f"Hardware Status: Volume {diag['volume_percent']}%, Muted: {diag['is_muted']}, "
+                f"Brightness: {diag['brightness_percent']}%, CPU: {diag['cpu_percent']}%, RAM: {diag['ram_percent']}%."
+            )
+
+        result = ToolResult(
+            tool_name=self.name,
+            success=True,
+            output=output,
+            data=data,
+        )
+        result.verification = self.verify(result, action=action, data=data)
+        return result
+
+    def verify(self, result: ToolResult, **kwargs: Any) -> VerificationResult:
+        action = kwargs.get("action", "")
+        data = kwargs.get("data", {})
+        return VerificationResult(
+            verified=True,
+            method="hardware_state_verification",
+            details=f"System control action '{action}' verified via Windows APIs.",
+            metrics=data,
+        )

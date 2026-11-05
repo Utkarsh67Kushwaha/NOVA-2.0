@@ -25,6 +25,14 @@ export interface SystemStatusData {
     disk_total_gb: number;
     disk_percent: number;
   };
+  hardware?: {
+    volume_percent: number;
+    is_muted: boolean;
+    brightness_percent: number | null;
+    battery?: any;
+    cpu_percent?: number;
+    ram_percent?: number;
+  };
   app: {
     name: string;
     version: string;

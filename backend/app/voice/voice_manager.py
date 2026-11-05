@@ -166,6 +166,14 @@ class VoiceAssistantManager:
                 prediction["tool_result"] = t_res.model_dump()
                 return f"Searching for {search_query}."
 
+            elif intent == "SYSTEM_CONTROL":
+                action = entities.get("action", "status")
+                value = entities.get("value")
+                t_res = default_registry.execute("system_control", {"action": action, "value": value})
+                prediction["executed_tool"] = "system_control"
+                prediction["tool_result"] = t_res.model_dump()
+                return t_res.output
+
             elif intent == "SYSTEM_INFO":
                 targets = entities.get("metric_targets", [])
                 filter_name = "all"

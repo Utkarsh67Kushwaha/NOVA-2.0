@@ -12,6 +12,7 @@ from backend.app.core.config import settings
 from backend.app.core.logger import logger
 from backend.app.services.intent_service import intent_service
 from backend.app.tools import default_registry
+from backend.app.system.hardware_controller import hardware_controller
 
 router = APIRouter()
 START_TIME = time.time()
@@ -53,6 +54,7 @@ async def system_status() -> Dict[str, Any]:
             "architecture": platform.machine(),
             "processor": platform.processor(),
         },
+        "hardware": hardware_controller.get_hardware_status(),
         "resources": {
             "cpu_percent": psutil.cpu_percent(interval=None),
             "ram_total_gb": round(memory.total / (1024**3), 2),
@@ -112,7 +114,15 @@ async def process_command(request: CommandRequest) -> Dict[str, Any]:
     executed_tool = None
     tool_result = None
 
-    if intent == "SYSTEM_INFO":
+    if intent == "SYSTEM_CONTROL":
+        action = entities.get("action", "status")
+        value = entities.get("value")
+        t_res = default_registry.execute("system_control", {"action": action, "value": value})
+        executed_tool = "system_control"
+        tool_result = t_res.model_dump()
+        live_response = t_res.output
+
+    elif intent == "SYSTEM_INFO":
         targets = entities.get("metric_targets", [])
         filter_name = "all"
         if "battery" in targets:

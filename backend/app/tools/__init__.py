@@ -15,6 +15,7 @@ from backend.app.tools.desktop_tools import (
     ManageWindowTool,
     TakeScreenshotTool,
     MediaControlTool,
+    SystemControlTool,
 )
 from backend.app.tools.browser_tools import OpenUrlTool, WebSearchTool, PlayMusicTool
 from backend.app.tools.file_tools import (
@@ -33,6 +34,7 @@ def setup_default_tools(registry: ToolRegistry = default_registry) -> ToolRegist
     registry.register(ManageWindowTool())
     registry.register(TakeScreenshotTool())
     registry.register(MediaControlTool())
+    registry.register(SystemControlTool())
 
     # Browser tools
     registry.register(OpenUrlTool())
