@@ -8,11 +8,11 @@ from faster_whisper import WhisperModel
 
 logger = logging.getLogger("nova.voice.stt")
 
-# Context prompt to bias Whisper toward recognizing bilingual Indian/Hinglish commands & popular music titles
+# Context prompt to bias Whisper toward recognizing bilingual Indian/Hinglish commands & popular desktop tasks
 DEFAULT_INITIAL_PROMPT = (
-    "NOVA AI desktop assistant. Voice commands in English and Hindi/Hinglish: "
-    "play song, gaana bajao, chalao, kesariya, arijit singh, music, spotify, youtube, "
-    "open chrome, vscode, search, reminder, system info, volume, shutdown."
+    "Hey NOVA desktop assistant. Commands: play song, kesariya, gaana bajao, chalao, "
+    "open chrome, notepad, calculator, calc, sc, take screenshot, system info, battery, "
+    "ram, cpu, reminder, stop, pause, resume, continue, aage play karo, gana band karo."
 )
 
 

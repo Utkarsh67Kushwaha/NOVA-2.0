@@ -45,11 +45,11 @@ class VoiceAssistantManager:
 
     def __init__(self):
         self.state: VoiceState = VoiceState.IDLE
-        # Optimized VAD: 0.75s silence timeout for fast responsive endpointing
+        # Human-optimized VAD: 0.0014 energy threshold, 1.1s natural pause, 0.22s min speech
         self.vad = VoiceActivityDetector(
-            energy_threshold=0.0018,
-            silence_timeout_sec=0.75,
-            min_speech_duration_sec=0.35,
+            energy_threshold=0.0014,
+            silence_timeout_sec=1.1,
+            min_speech_duration_sec=0.22,
         )
         self.last_transcript: str = ""
         self.last_response: Optional[Dict[str, Any]] = None
@@ -212,6 +212,7 @@ class VoiceAssistantManager:
             self.is_hands_free = True
             self._stop_event.clear()
             self._flush_audio_queue()
+            self.vad.reset()
 
             if not audio_capture.is_running:
                 audio_capture.start()
@@ -251,7 +252,7 @@ class VoiceAssistantManager:
                 time.sleep(0.2)
                 continue
 
-            # Auto-resume paused media if followup window timed out without speech
+            # Auto-resume paused media if followup window timed out without user command
             if self.followup_active_until > 0 and time.time() >= self.followup_active_until:
                 self.followup_active_until = 0.0
                 if media_controller.is_paused_for_voice:
@@ -281,7 +282,19 @@ class VoiceAssistantManager:
                 self.state = VoiceState.PROCESSING
                 transcript = stt_service.transcribe(speech_audio)
                 if not transcript or not transcript.strip():
-                    self.state = VoiceState.IDLE
+                    self.state = VoiceState.LISTENING if time.time() < self.followup_active_until else VoiceState.IDLE
+                    continue
+
+                # Filter out self-echo if mic overheard NOVA's prompt
+                norm_t = transcript.lower().strip()
+                if norm_t in (
+                    "yes, i am listening", "yes i am listening", "i am listening",
+                    "listening", "yes i'm listening", "i'm listening"
+                ):
+                    logger.debug("Ignoring self-echo utterance: '%s'", transcript)
+                    self._flush_audio_queue()
+                    self.vad.reset()
+                    self.state = VoiceState.LISTENING if time.time() < self.followup_active_until else VoiceState.IDLE
                     continue
 
                 self.last_transcript = transcript
@@ -299,10 +312,10 @@ class VoiceAssistantManager:
                 # When 'Hey NOVA' is spoken: immediately interrupt TTS, pause external media, and play chime
                 if is_wake:
                     tts_service.stop()
-                    paused = media_controller.pause_if_playing()
-                    if paused:
-                        logger.info("Active media paused upon detecting 'Hey NOVA'.")
+                    # Trigger instant media pause via Windows SMTC & hardware keys
+                    media_controller.pause_media()
                     self._flush_audio_queue()
+                    self.vad.reset()
                     play_wake_chime()
 
                 command_to_run = clean_command if is_wake else transcript
@@ -320,10 +333,19 @@ class VoiceAssistantManager:
                 if not command_to_run:
                     # User simply said "Hey NOVA" without command
                     response_text = "Yes, I am listening."
-                    self.followup_active_until = time.time() + 6.0
                     event_data["spoken_response"] = response_text
                     self.state = VoiceState.SPEAKING
-                    tts_service.speak(response_text, blocking=False)
+                    # SPEAK SYNCHRONOUSLY so mic does NOT record self
+                    tts_service.speak(response_text, blocking=True)
+
+                    # After speaking finishes: flush queue, reset VAD, and open followup window
+                    time.sleep(0.1)
+                    self._flush_audio_queue()
+                    self.vad.reset()
+                    self.followup_active_until = time.time() + 8.5
+                    self.state = VoiceState.LISTENING
+                    logger.info("Followup window open for 8.5s. Ready for user's command.")
+
                 else:
                     # User spoke full command
                     self.followup_active_until = 0.0
@@ -341,7 +363,8 @@ class VoiceAssistantManager:
 
                     event_data["spoken_response"] = response_text
                     self.state = VoiceState.SPEAKING
-                    tts_service.speak(response_text, blocking=False)
+                    tts_service.speak(response_text, blocking=True)
+                    self.state = VoiceState.IDLE
 
                     # Auto-resume media logic:
                     # If this was not a new song request or explicit stop/pause, resume whatever was playing
@@ -351,15 +374,9 @@ class VoiceAssistantManager:
                         else None
                     )
                     if prediction.get("intent") != "PLAY_MUSIC":
-                        def _resume_after_speaking():
-                            t = 0.0
-                            while tts_service.is_speaking and t < 4.5:
-                                time.sleep(0.1)
-                                t += 0.1
-                            time.sleep(0.3)
-                            media_controller.resume_if_paused_by_voice()
-
-                        threading.Thread(target=_resume_after_speaking, daemon=True).start()
+                        # Resumes media after response
+                        time.sleep(0.3)
+                        media_controller.resume_if_paused_by_voice()
                     elif action in ("pause", "stop", "play", "resume", "continue"):
                         media_controller.clear_paused_state()
 
@@ -374,7 +391,10 @@ class VoiceAssistantManager:
             except Exception as e:
                 logger.error("Error in continuous listen processing: %s", e)
             finally:
-                self.state = VoiceState.IDLE
+                if time.time() < self.followup_active_until:
+                    self.state = VoiceState.LISTENING
+                else:
+                    self.state = VoiceState.IDLE
 
     def record_and_process_once(self, max_duration_sec: float = 6.0) -> Dict[str, Any]:
         """Records a single voice command from mic, transcribes, classifies, executes, speaks result, and returns data."""
@@ -385,9 +405,9 @@ class VoiceAssistantManager:
             if not audio_capture.is_running:
                 audio_capture.start()
 
-            # Pause media if playing so background sound does not interfere
+            # Pause media via SMTC so background sound does not interfere
             tts_service.stop()
-            media_controller.pause_if_playing()
+            media_controller.pause_media()
             self._flush_audio_queue()
 
             collected_audio = []
@@ -457,7 +477,7 @@ class VoiceAssistantManager:
                     prediction["live_response"] = response_text
 
                 self.state = VoiceState.SPEAKING
-                tts_service.speak(response_text, blocking=False)
+                tts_service.speak(response_text, blocking=True)
                 self.state = VoiceState.IDLE
 
                 # Auto-resume media if non-music command
@@ -467,15 +487,8 @@ class VoiceAssistantManager:
                     else None
                 )
                 if prediction.get("intent") != "PLAY_MUSIC":
-                    def _resume_after_speaking_once():
-                        t = 0.0
-                        while tts_service.is_speaking and t < 4.5:
-                            time.sleep(0.1)
-                            t += 0.1
-                        time.sleep(0.3)
-                        media_controller.resume_if_paused_by_voice()
-
-                    threading.Thread(target=_resume_after_speaking_once, daemon=True).start()
+                    time.sleep(0.3)
+                    media_controller.resume_if_paused_by_voice()
                 elif action in ("pause", "stop", "play", "resume", "continue"):
                     media_controller.clear_paused_state()
 
