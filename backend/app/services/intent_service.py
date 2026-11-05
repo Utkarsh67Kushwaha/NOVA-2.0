@@ -444,6 +444,76 @@ class IntentClassifierService:
                 "top_probabilities": {"OPEN_APP": 0.98},
             }
 
+        # 0.51 App Termination & Close Rules (e.g., 'close notepad', 'notepad band karo', 'exit chrome')
+        app_close_match = (
+            re.search(r'\b(?:close|quit|exit|terminate|kill|band\s+karo|band\s+kar\s+do|hatao|band)\s+(notepad|calculator|calc|chrome|browser|spotify|code|vscode|terminal|cmd|powershell|explorer|settings|camera|paint)\b', clean)
+            or re.search(r'\b(notepad|calculator|calc|chrome|browser|spotify|code|vscode|terminal|cmd|powershell|explorer|settings|camera|paint)\s+(?:close|quit|exit|terminate|kill|band\s+karo|band\s+kar\s+do|hatao|band)\b', clean)
+        )
+        if app_close_match:
+            raw_app = app_close_match.group(1).lower().strip()
+            canonical_map = {
+                'calc': 'calculator',
+                'browser': 'chrome',
+                'code': 'vscode',
+                'terminal': 'cmd',
+            }
+            app_id = canonical_map.get(raw_app, raw_app)
+            return {
+                'query': text,
+                'intent': 'CLOSE_APP',
+                'raw_intent': 'CLOSE_APP',
+                'confidence': 0.98,
+                'confidence_percent': 98.0,
+                'threshold': self.confidence_threshold,
+                'needs_clarification': False,
+                'entities': {'app_name': app_id},
+                'model_name': 'RulePriority-AppClose',
+                'top_probabilities': {'CLOSE_APP': 0.98},
+            }
+
+        # 0.52 Window Management Rules (e.g., 'minimize chrome', 'maximize notepad', 'focus vscode')
+        win_match = (
+            re.search(r'\b(minimize|maximize|focus|restore)\s+(notepad|calculator|calc|chrome|browser|spotify|code|vscode|terminal|cmd|powershell|window)\b', clean)
+            or re.search(r'\b(notepad|calculator|calc|chrome|browser|spotify|code|vscode|terminal|cmd|powershell|window)\s+(?:ko\s+)?(minimize|maximize|focus|restore)\b', clean)
+        )
+        if win_match:
+            g1, g2 = win_match.group(1).lower().strip(), win_match.group(2).lower().strip()
+            actions = {'minimize', 'maximize', 'focus', 'restore'}
+            action = g1 if g1 in actions else g2
+            target = g2 if g1 in actions else g1
+            return {
+                'query': text,
+                'intent': 'WINDOW_ACTION',
+                'raw_intent': 'WINDOW_ACTION',
+                'confidence': 0.98,
+                'confidence_percent': 98.0,
+                'threshold': self.confidence_threshold,
+                'needs_clarification': False,
+                'entities': {'action': action, 'window_title': target},
+                'model_name': 'RulePriority-WindowManage',
+                'top_probabilities': {'WINDOW_ACTION': 0.98},
+            }
+
+        # 0.53 Clipboard AI Assistant Rules (e.g., 'read clipboard', 'clipboard me kya hai', 'summarize clipboard', 'clear clipboard')
+        if 'clipboard' in clean or 'copied text' in clean:
+            action = 'read'
+            if any(w in clean for w in ['clear', 'saaf', 'empty', 'delete', 'hatao']):
+                action = 'clear'
+            elif any(w in clean for w in ['summarize', 'summary', 'explain', 'samjhao', 'meaning', 'batao', 'bata do']):
+                action = 'summarize'
+            return {
+                'query': text,
+                'intent': 'CLIPBOARD_ACTION',
+                'raw_intent': 'CLIPBOARD_ACTION',
+                'confidence': 0.98,
+                'confidence_percent': 98.0,
+                'threshold': self.confidence_threshold,
+                'needs_clarification': False,
+                'entities': {'action': action},
+                'model_name': 'RulePriority-Clipboard',
+                'top_probabilities': {'CLIPBOARD_ACTION': 0.98},
+            }
+
         # 0.7 System Specs & Hardware Diagnostics Rules
         if any(p in clean for p in [
             "battery kitni hai", "battery percent", "battery percentage", "what is my battery", "battery status", "charge kitna hai", "battery check",

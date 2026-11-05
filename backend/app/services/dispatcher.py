@@ -75,6 +75,32 @@ def dispatch_intent(
             tool_result = t_res.model_dump()
             live_response = t_res.output
 
+        elif intent == "CLOSE_APP":
+            app_name = entities.get("app_name")
+            if app_name:
+                t_res = reg.execute("close_app", {"app_name": app_name})
+                executed_tool = "close_app"
+                tool_result = t_res.model_dump()
+                live_response = t_res.output
+            else:
+                live_response = "App close intent detected, but no app name was provided."
+
+        elif intent == "WINDOW_ACTION":
+            window_title = entities.get("window_title", "window")
+            action = entities.get("action", "focus")
+            t_res = reg.execute("manage_window", {"window_title": window_title, "action": action})
+            executed_tool = "manage_window"
+            tool_result = t_res.model_dump()
+            live_response = t_res.output
+
+        elif intent == "CLIPBOARD_ACTION":
+            action = entities.get("action", "read")
+            content = entities.get("content", "")
+            t_res = reg.execute("clipboard_tool", {"action": action, "content": content})
+            executed_tool = "clipboard_tool"
+            tool_result = t_res.model_dump()
+            live_response = t_res.output
+
         elif intent == "OPEN_APP":
             app_name = entities.get("app_name")
             if app_name in ("sc", "screenshot", "snippingtool"):

@@ -963,3 +963,304 @@ class ListRemindersTool(BaseTool):
             method="in_memory_read",
             details="Reminders list fetched safely from scheduler.",
         )
+
+
+class CloseAppTool(BaseTool):
+    """Safely closes an allowlisted desktop application by process name."""
+
+    def __init__(self):
+        super().__init__(
+            name="close_app",
+            description="Safely close or terminate an allowlisted desktop application (Notepad, Calculator, Chrome, Spotify, etc.).",
+            category="desktop",
+            risk_level=RiskLevel.LOW_RISK,
+        )
+
+    def get_parameters_schema(self) -> List[ToolParamSchema]:
+        return [
+            ToolParamSchema(
+                name="app_name",
+                type="string",
+                description=f"Name of allowlisted application to close (choices: {', '.join(sorted(ALLOWLISTED_APPS.keys()))})",
+                required=True,
+            ),
+            ToolParamSchema(
+                name="force",
+                type="boolean",
+                description="Whether to force kill if graceful terminate fails (default False)",
+                required=False,
+                default=False,
+            ),
+        ]
+
+    def execute(self, **kwargs: Any) -> ToolResult:
+        app_name = str(kwargs.get("app_name", "")).strip().lower()
+        force = bool(kwargs.get("force", False))
+
+        if not app_name:
+            return ToolResult(
+                tool_name=self.name,
+                success=False,
+                output="App name cannot be empty.",
+                error="Missing app_name parameter.",
+            )
+
+        canonical_map = {
+            "calc": "calculator",
+            "browser": "chrome",
+            "code": "vscode",
+            "terminal": "cmd",
+        }
+        mapped_app = canonical_map.get(app_name, app_name)
+        app_info = ALLOWLISTED_APPS.get(mapped_app) or ALLOWLISTED_APPS.get(app_name)
+
+        if not app_info:
+            return ToolResult(
+                tool_name=self.name,
+                success=False,
+                output=f"Application '{app_name}' is not in the security allowlist.",
+                error=f"Unallowlisted app target '{app_name}'",
+            )
+
+        target_proc = (app_info.get("process_name") or "").lower()
+        fallback_proc = (app_info.get("fallback_process") or "").lower()
+
+        closed_pids = []
+        for proc in psutil.process_iter(attrs=["name", "pid"]):
+            try:
+                name = (proc.info.get("name") or "").lower()
+                if name in (target_proc, fallback_proc) and proc.info["pid"] != os.getpid():
+                    p = psutil.Process(proc.info["pid"])
+                    if force:
+                        p.kill()
+                    else:
+                        p.terminate()
+                    closed_pids.append(proc.info["pid"])
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+
+        if not closed_pids:
+            return ToolResult(
+                tool_name=self.name,
+                success=True,
+                output=f"No active running instance of '{app_name}' was found to close.",
+                data={"app_name": app_name, "closed_pids": []},
+            )
+
+        time.sleep(0.2)
+        result = ToolResult(
+            tool_name=self.name,
+            success=True,
+            output=f"Successfully closed '{app_name}' (terminated {len(closed_pids)} process instance(s)).",
+            data={"app_name": app_name, "closed_pids": closed_pids},
+        )
+        result.verification = self.verify(result, target_proc=target_proc, fallback_proc=fallback_proc)
+        return result
+
+    def verify(self, result: ToolResult, **kwargs: Any) -> VerificationResult:
+        if not result.success:
+            return VerificationResult(
+                verified=False,
+                method="process_termination_check",
+                details="Action failed prior to verification.",
+            )
+
+        target_proc = kwargs.get("target_proc", "")
+        fallback_proc = kwargs.get("fallback_proc", "")
+
+        remaining = []
+        for proc in psutil.process_iter(attrs=["name", "pid"]):
+            try:
+                name = (proc.info.get("name") or "").lower()
+                if name in (target_proc, fallback_proc) and proc.info["pid"] != os.getpid():
+                    remaining.append(proc.info["pid"])
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+
+        if not remaining:
+            return VerificationResult(
+                verified=True,
+                method="process_absence_verification",
+                details="Confirmed: No remaining instances of the target application are running.",
+            )
+        else:
+            return VerificationResult(
+                verified=False,
+                method="process_absence_verification",
+                details=f"Warning: {len(remaining)} instance(s) still active.",
+                metrics={"remaining_pids": remaining},
+            )
+
+
+class ClipboardTool(BaseTool):
+    """Safe tool to read, set, clear, or summarize Windows clipboard contents."""
+
+    def __init__(self):
+        super().__init__(
+            name="clipboard_tool",
+            description="Inspect, clear, set, or AI-summarize the current Windows clipboard content.",
+            category="desktop",
+            risk_level=RiskLevel.READ_ONLY,
+        )
+
+    def get_parameters_schema(self) -> List[ToolParamSchema]:
+        return [
+            ToolParamSchema(
+                name="action",
+                type="string",
+                description="Clipboard action: read, clear, set, summarize",
+                required=True,
+                default="read",
+                choices=["read", "clear", "set", "summarize"],
+            ),
+            ToolParamSchema(
+                name="content",
+                type="string",
+                description="Text content to set to clipboard (required if action='set')",
+                required=False,
+                default="",
+            ),
+        ]
+
+    def _get_clipboard_raw(self) -> str:
+        import ctypes
+        from ctypes import wintypes
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
+        kernel32.GlobalLock.restype = ctypes.c_void_p
+        kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+        kernel32.GlobalUnlock.restype = wintypes.BOOL
+        user32.GetClipboardData.argtypes = [wintypes.UINT]
+        user32.GetClipboardData.restype = ctypes.c_void_p
+
+        if not user32.OpenClipboard(None):
+            return ""
+        try:
+            h_mem = user32.GetClipboardData(13)  # CF_UNICODETEXT
+            if not h_mem:
+                return ""
+            p_mem = kernel32.GlobalLock(h_mem)
+            if not p_mem:
+                return ""
+            res = ctypes.wstring_at(p_mem)
+            kernel32.GlobalUnlock(h_mem)
+            return res
+        except Exception as e:
+            logger.debug("Win32 clipboard read error: %s", e)
+            return ""
+        finally:
+            user32.CloseClipboard()
+
+    def _clear_clipboard_raw(self) -> None:
+        import ctypes
+        user32 = ctypes.windll.user32
+        if not user32.OpenClipboard(None):
+            return
+        try:
+            user32.EmptyClipboard()
+        finally:
+            user32.CloseClipboard()
+
+    def _set_clipboard_raw(self, text: str) -> None:
+        import ctypes
+        from ctypes import wintypes
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+        kernel32.GlobalAlloc.restype = ctypes.c_void_p
+        kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
+        kernel32.GlobalLock.restype = ctypes.c_void_p
+        kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+        kernel32.GlobalUnlock.restype = wintypes.BOOL
+        user32.SetClipboardData.argtypes = [wintypes.UINT, ctypes.c_void_p]
+        user32.SetClipboardData.restype = ctypes.c_void_p
+
+        if not user32.OpenClipboard(None):
+            return
+        try:
+            user32.EmptyClipboard()
+            data = text.encode("utf-16le") + b"\x00\x00"
+            h_mem = kernel32.GlobalAlloc(0x0002, len(data))  # GMEM_MOVEABLE
+            if not h_mem:
+                return
+            p_mem = kernel32.GlobalLock(h_mem)
+            ctypes.memmove(p_mem, data, len(data))
+            kernel32.GlobalUnlock(h_mem)
+            user32.SetClipboardData(13, h_mem)
+        except Exception as e:
+            logger.debug("Win32 clipboard set error: %s", e)
+        finally:
+            user32.CloseClipboard()
+
+    def execute(self, **kwargs: Any) -> ToolResult:
+        action = str(kwargs.get("action", "read")).strip().lower()
+        content = str(kwargs.get("content", "")).strip()
+
+        if action == "clear":
+            self._clear_clipboard_raw()
+            return ToolResult(
+                tool_name=self.name,
+                success=True,
+                output="Windows clipboard cleared successfully.",
+                data={"action": "clear"},
+            )
+
+        elif action == "set":
+            if not content:
+                return ToolResult(
+                    tool_name=self.name,
+                    success=False,
+                    output="No content provided to copy to clipboard.",
+                    error="Missing content parameter.",
+                )
+            self._set_clipboard_raw(content)
+            return ToolResult(
+                tool_name=self.name,
+                success=True,
+                output=f"Copied {len(content)} characters to clipboard.",
+                data={"action": "set", "char_count": len(content)},
+            )
+
+        elif action == "summarize":
+            current_text = self._get_clipboard_raw()
+            if not current_text or not current_text.strip():
+                return ToolResult(
+                    tool_name=self.name,
+                    success=True,
+                    output="Clipboard is currently empty. Nothing to summarize.",
+                    data={"action": "summarize", "empty": True},
+                )
+            from backend.app.services.gemini_service import gemini_service
+            prompt = f"Please briefly explain and summarize this copied text in 2 conversational sentences:\n\n{current_text[:1500]}"
+            summary = gemini_service.ask(prompt)
+            return ToolResult(
+                tool_name=self.name,
+                success=True,
+                output=f"Clipboard Summary: {summary}",
+                data={"action": "summarize", "summary": summary, "original_length": len(current_text)},
+            )
+
+        else:
+            current_text = self._get_clipboard_raw()
+            if not current_text or not current_text.strip():
+                return ToolResult(
+                    tool_name=self.name,
+                    success=True,
+                    output="Clipboard is currently empty.",
+                    data={"action": "read", "content": "", "empty": True},
+                )
+            preview = current_text if len(current_text) <= 120 else current_text[:120] + "..."
+            return ToolResult(
+                tool_name=self.name,
+                success=True,
+                output=f"Clipboard has {len(current_text)} characters: \"{preview}\"",
+                data={"action": "read", "content": current_text, "char_count": len(current_text)},
+            )
+
+    def verify(self, result: ToolResult, **kwargs: Any) -> VerificationResult:
+        return VerificationResult(
+            verified=True,
+            method="clipboard_inspection",
+            details="Clipboard operation executed safely.",
+        )

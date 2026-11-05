@@ -265,3 +265,45 @@ def test_take_screenshot_tool():
             Path(sc_path).unlink()
         except Exception:
             pass
+
+
+def test_close_app_tool():
+    """Verify close_app tool allowlist enforcement and safe execution."""
+    # Test unallowlisted app rejection
+    res_bad = default_registry.execute("close_app", {"app_name": "malicious_virus.exe"})
+    assert res_bad.success is False
+    assert "not in the security allowlist" in res_bad.output
+
+    # Test allowlisted app execution (notepad)
+    res_good = default_registry.execute("close_app", {"app_name": "notepad"})
+    assert res_good.success is True
+
+    # Test /api/command routing
+    res_cmd = client.post("/api/command", json={"text": "close notepad"})
+    assert res_cmd.status_code == 200
+    cmd_data = res_cmd.json()
+    assert cmd_data["intent"] == "CLOSE_APP"
+    assert cmd_data["executed_tool"] == "close_app"
+
+
+def test_clipboard_tool():
+    """Verify clipboard_tool can set, read, and clear clipboard contents safely."""
+    # Set text
+    res_set = default_registry.execute("clipboard_tool", {"action": "set", "content": "NOVA 2.0 Test Clipboard Text"})
+    assert res_set.success is True
+
+    # Read text
+    res_read = default_registry.execute("clipboard_tool", {"action": "read"})
+    assert res_read.success is True
+    assert "NOVA 2.0" in res_read.output
+
+    # Clear text
+    res_clear = default_registry.execute("clipboard_tool", {"action": "clear"})
+    assert res_clear.success is True
+
+    # Test /api/command routing
+    res_cmd = client.post("/api/command", json={"text": "read clipboard"})
+    assert res_cmd.status_code == 200
+    cmd_data = res_cmd.json()
+    assert cmd_data["intent"] == "CLIPBOARD_ACTION"
+    assert cmd_data["executed_tool"] == "clipboard_tool"

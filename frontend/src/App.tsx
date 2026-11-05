@@ -64,6 +64,9 @@ const SAMPLE_COMMANDS = [
   'play lofi beats for focus',
   'pc lock karo',
   'remind me to drink water at 5pm',
+  'notepad band karo',
+  'read clipboard',
+  'minimize chrome',
 ];
 
 export default function App(): React.JSX.Element {

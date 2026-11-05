@@ -18,6 +18,8 @@ from backend.app.tools.desktop_tools import (
     SystemControlTool,
     SetReminderTool,
     ListRemindersTool,
+    CloseAppTool,
+    ClipboardTool,
 )
 from backend.app.tools.browser_tools import OpenUrlTool, WebSearchTool, PlayMusicTool
 from backend.app.tools.file_tools import (
@@ -32,6 +34,8 @@ def setup_default_tools(registry: ToolRegistry = default_registry) -> ToolRegist
     """Register all allowlisted tools into the given registry."""
     # Desktop tools
     registry.register(LaunchAppTool())
+    registry.register(CloseAppTool())
+    registry.register(ClipboardTool())
     registry.register(SystemStatusTool())
     registry.register(ManageWindowTool())
     registry.register(TakeScreenshotTool())
@@ -70,5 +74,7 @@ __all__ = [
     "PendingAction",
     "setup_default_tools",
     "TakeScreenshotTool",
+    "CloseAppTool",
+    "ClipboardTool",
     "PlayMusicTool",
 ]
