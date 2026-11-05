@@ -9,6 +9,7 @@ from ctypes import HRESULT, POINTER, c_float, c_int
 import logging
 import subprocess
 import threading
+import time
 from typing import Any, Dict, Optional
 import psutil
 
@@ -91,6 +92,35 @@ class SystemHardwareController:
 
     def __init__(self):
         self._lock = threading.Lock()
+        self._cached_brightness: Optional[int] = 70
+        self._last_brightness_read: float = 0.0
+        self._brightness_updating: bool = False
+        # Asynchronously fetch real brightness on startup so the main thread / API is never blocked
+        threading.Thread(
+            target=self._refresh_brightness_worker,
+            daemon=True,
+            name="NOVA-BrightnessInit",
+        ).start()
+
+    def _refresh_brightness_worker(self) -> None:
+        """Background worker to query brightness without blocking API request threads."""
+        try:
+            cmd = "(Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightness).CurrentBrightness"
+            proc = subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", cmd],
+                capture_output=True,
+                text=True,
+                timeout=2.0,
+            )
+            out = proc.stdout.strip()
+            if out.isdigit():
+                self._cached_brightness = int(out)
+                self._last_brightness_read = time.time()
+                logger.debug("Brightness cache refreshed: %d%%", self._cached_brightness)
+        except Exception as e:
+            logger.debug("Brightness background read error: %s", e)
+        finally:
+            self._brightness_updating = False
 
     def _get_audio_endpoint(self):
         """Returns initialized IAudioEndpointVolume interface."""
@@ -174,26 +204,27 @@ class SystemHardwareController:
     # --------------------------------------------------------------------------
     # Display Brightness Control
     # --------------------------------------------------------------------------
-    def get_brightness(self) -> Optional[int]:
-        """Reads current monitor brightness percentage (0 - 100) via WMI/CIM."""
-        try:
-            cmd = "(Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightness).CurrentBrightness"
-            proc = subprocess.run(
-                ["powershell", "-NoProfile", "-NonInteractive", "-Command", cmd],
-                capture_output=True,
-                text=True,
-                timeout=2.0,
-            )
-            out = proc.stdout.strip()
-            if out.isdigit():
-                return int(out)
-        except Exception as e:
-            logger.debug("Brightness read error: %s", e)
-        return None
+    def get_brightness(self, force: bool = False) -> Optional[int]:
+        """Returns monitor brightness percentage (0 - 100) instantly from memory cache (<0.1ms).
+
+        Refreshes cache asynchronously in the background so API polling latency remains ultra-low.
+        """
+        now = time.time()
+        # Refresh cache in background if stale (> 30s) or forced, without stalling the caller
+        if (now - self._last_brightness_read > 30.0 or force) and not self._brightness_updating:
+            self._brightness_updating = True
+            threading.Thread(
+                target=self._refresh_brightness_worker,
+                daemon=True,
+                name="NOVA-BrightnessRefresh",
+            ).start()
+        return self._cached_brightness
 
     def set_brightness(self, level_percent: int) -> Optional[int]:
         """Sets monitor brightness percentage (0 - 100) via WMI/CIM."""
         clamped = max(0, min(100, int(level_percent)))
+        self._cached_brightness = clamped
+        self._last_brightness_read = time.time()
         try:
             cmd = (
                 f"Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightnessMethods | "
