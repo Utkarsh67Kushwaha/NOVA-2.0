@@ -228,6 +228,7 @@ async def process_command(request: CommandRequest) -> Dict[str, Any]:
     prediction["live_response"] = live_response
     prediction["executed_tool"] = executed_tool
     prediction["tool_result"] = tool_result
+    prediction["needs_clarification"] = False
 
     logger.info(
         "Intent: %s (Confidence: %s%%, Latency: %sms, ExecutedTool: %s)",

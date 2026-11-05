@@ -19,7 +19,7 @@ class AudioCaptureService:
     def __init__(self, sample_rate: int = SAMPLE_RATE, block_size: int = BLOCK_SIZE):
         self.sample_rate = sample_rate
         self.block_size = block_size
-        self.audio_queue: queue.Queue = queue.Queue(maxsize=100)
+        self.audio_queue: queue.Queue = queue.Queue(maxsize=500)
         self.stream: Optional[sd.InputStream] = None
         self.is_running = False
         self.is_muted = False

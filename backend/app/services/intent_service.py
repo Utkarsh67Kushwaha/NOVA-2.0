@@ -116,6 +116,18 @@ class IntentClassifierService:
             if dev_k in text:
                 text = text.replace(dev_k, dev_v)
 
+        # Phonetic normalizations for varied human voice phrasings
+        voice_phonetics = [
+            (r"\b(?:awaz|awaaz|avaz|avaj|aawaaz|sound)\b", "aawaz"),
+            (r"\b(?:bada|badhao|badao|badha|tez)\b", "badha"),
+            (r"\b(?:kam|ghata|ghatao|dheemi|dheema)\b", "kam"),
+            (r"\b(?:screen\s*shot|clean\s*shot|screen\s*short)\b", "screenshot"),
+            (r"\b(?:roshni|screen\s*light|display\s*light)\b", "light"),
+            (r"\b(?:laptop|computer|system|workstation|machine)\b", "pc"),
+        ]
+        for p, r in voice_phonetics:
+            text = re.sub(p, r, text)
+
         # Phonetic corrections for common Faster-Whisper mishearings on Indian/Hinglish speech
         whisper_phonetic_fixes = [
             # Screenshot variants
@@ -324,10 +336,20 @@ class IntentClassifierService:
                 "top_probabilities": {"OPEN_APP": 0.98},
             }
 
-        # 0.5 App Launching Rules (e.g., "notepad kholo", "open calculator", "chrome launch karo")
-        app_open_match = re.search(r"\b(?:open|launch|kholo|chalao|start)\s+(notepad|calculator|calc|chrome|spotify|code|vscode|terminal|cmd|powershell|explorer|settings)\b", clean) or                          re.search(r"\b(notepad|calculator|calc|chrome|spotify|code|vscode|terminal|cmd|powershell|explorer|settings)\s+(?:kholo|open|launch|chalao|start)\b", clean)
+        # 0.5 App Launching Rules (e.g., "notepad kholo", "open calculator", "browser kholo")
+        app_open_match = (
+            re.search(r"\b(?:open|launch|kholo|chalao|start)\s+(notepad|calculator|calc|chrome|browser|spotify|code|vscode|terminal|cmd|powershell|explorer|settings|camera|paint)\b", clean)
+            or re.search(r"\b(notepad|calculator|calc|chrome|browser|spotify|code|vscode|terminal|cmd|powershell|explorer|settings|camera|paint)\s+(?:kholo|open|launch|chalao|start)\b", clean)
+        )
         if app_open_match:
-            app_id = app_open_match.group(1).lower().strip()
+            raw_app = app_open_match.group(1).lower().strip()
+            canonical_map = {
+                "calc": "calculator",
+                "browser": "chrome",
+                "code": "vscode",
+                "terminal": "cmd",
+            }
+            app_id = canonical_map.get(raw_app, raw_app)
             return {
                 "query": text,
                 "intent": "OPEN_APP",
@@ -476,7 +498,7 @@ class IntentClassifierService:
                 "top_probabilities": {"SYSTEM_CONTROL": 0.98},
             }
 
-        has_bright = any(w in clean or w in stripped for w in ["brightness", "screen light", "display light", "screen roshni"])
+        has_bright = any(w in clean or w in stripped for w in ["brightness", "light", "screen light", "display light", "screen roshni", "roshni"])
         is_bright_up = has_bright and any(w in clean or w in stripped for w in ["badha", "increase", "up", "tez", "high", "plus", "+"])
         is_bright_down = has_bright and any(w in clean or w in stripped for w in ["kam", "ghata", "decrease", "down", "low", "minus", "-"])
 
@@ -534,7 +556,13 @@ class IntentClassifierService:
             }
 
         # 3. Security & Power Lock commands
-        if any(p in clean for p in ["lock pc", "pc lock karo", "lock my pc", "lock computer", "computer lock karo", "lock workstation", "system lock karo"]):
+        is_lock_cmd = (
+            ("lock" in clean or "lock" in stripped)
+            and any(w in clean or w in stripped for w in ["pc", "screen", "computer", "laptop", "system", "workstation", "windows", "desktop"])
+        ) or any(p in clean or p in stripped for p in [
+            "lock pc", "pc lock", "lock karo", "lock kar do", "screen lock", "lock screen", "laptop lock", "computer lock", "lock computer"
+        ])
+        if is_lock_cmd:
             return {
                 "query": text,
                 "intent": "SYSTEM_CONTROL",
@@ -544,6 +572,20 @@ class IntentClassifierService:
                 "threshold": self.confidence_threshold,
                 "needs_clarification": False,
                 "entities": {"control_type": "power", "action": "lock_workstation", "value": None},
+                "model_name": "RulePriority-SystemControl",
+                "top_probabilities": {"SYSTEM_CONTROL": 0.98},
+            }
+
+        if any(p in clean or p in stripped for p in ["sleep karo", "pc sleep", "suspend karo", "computer sleep", "sleep mode", "sleep"]):
+            return {
+                "query": text,
+                "intent": "SYSTEM_CONTROL",
+                "raw_intent": "SYSTEM_CONTROL",
+                "confidence": 0.98,
+                "confidence_percent": 98.0,
+                "threshold": self.confidence_threshold,
+                "needs_clarification": False,
+                "entities": {"control_type": "power", "action": "sleep", "value": None},
                 "model_name": "RulePriority-SystemControl",
                 "top_probabilities": {"SYSTEM_CONTROL": 0.98},
             }

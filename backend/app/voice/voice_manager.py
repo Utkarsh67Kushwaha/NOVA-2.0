@@ -148,17 +148,39 @@ class VoiceAssistantManager:
 
             elif intent == "OPEN_APP":
                 app_name = entities.get("app_name")
+                canonical_apps = {
+                    "calc": "calc",
+                    "calculator": "calc",
+                    "notepad": "notepad",
+                    "chrome": "chrome",
+                    "browser": "chrome",
+                    "spotify": "spotify",
+                    "vscode": "vscode",
+                    "code": "vscode",
+                    "terminal": "cmd",
+                    "cmd": "cmd",
+                    "powershell": "powershell",
+                    "explorer": "explorer",
+                    "camera": "camera",
+                    "paint": "paint",
+                    "settings": "settings",
+                }
+                mapped_name = canonical_apps.get(app_name, app_name) if app_name else None
                 if app_name in ("sc", "screenshot", "snippingtool"):
                     t_res = default_registry.execute("take_screenshot", {})
                     prediction["executed_tool"] = "take_screenshot"
                     prediction["tool_result"] = t_res.model_dump()
-                    return "Screenshot captured successfully."
-                elif app_name:
-                    t_res = default_registry.execute("launch_app", {"app_name": app_name})
+                    return t_res.output
+                elif mapped_name:
+                    t_res = default_registry.execute("launch_app", {"app_name": mapped_name})
                     prediction["executed_tool"] = "launch_app"
                     prediction["tool_result"] = t_res.model_dump()
                     return t_res.output
-                return "Application name samajh nahi aaya."
+                else:
+                    t_res = default_registry.execute("launch_app", {"app_name": "notepad"})
+                    prediction["executed_tool"] = "launch_app"
+                    prediction["tool_result"] = t_res.model_dump()
+                    return t_res.output
 
             elif intent == "BROWSER_ACTION":
                 search_query = entities.get("search_query", command)
@@ -201,8 +223,17 @@ class VoiceAssistantManager:
                 return "File search ke liye naam specify karein."
 
             elif intent == "REMINDER":
+                title = entities.get("title") or command
                 time_exp = entities.get("time_expression", "")
-                return f"Reminder note kiya: {command} ({time_exp or 'samay specify nahi kiya'})."
+                due_seconds = entities.get("due_seconds")
+                t_res = default_registry.execute("set_reminder", {
+                    "title": title,
+                    "due_seconds": due_seconds,
+                    "time_expression": time_exp,
+                })
+                prediction["executed_tool"] = "set_reminder"
+                prediction["tool_result"] = t_res.model_dump()
+                return t_res.output
 
             elif intent in ("AI_CHAT", "UNKNOWN_INTENT"):
                 ans = gemini_service.ask(command)
@@ -367,14 +398,9 @@ class VoiceAssistantManager:
                     prediction = intent_service.predict(command_to_run)
                     event_data["prediction"] = prediction
 
-                    if prediction.get("needs_clarification"):
-                        response_text = prediction.get(
-                            "clarification_message",
-                            "Mujhe theek se samajh nahi aaya, kripya dobara bolein.",
-                        )
-                    else:
-                        response_text = self._execute_voice_action(prediction, command_to_run)
-                        prediction["live_response"] = response_text
+                    response_text = self._execute_voice_action(prediction, command_to_run)
+                    prediction["live_response"] = response_text
+                    prediction["needs_clarification"] = False
 
                     event_data["spoken_response"] = response_text
                     self.state = VoiceState.SPEAKING
@@ -482,14 +508,9 @@ class VoiceAssistantManager:
 
                 # Step 4: Tool Execution & Text-to-Speech Response
                 response_text = ""
-                if prediction.get("needs_clarification"):
-                    response_text = prediction.get(
-                        "clarification_message",
-                        "Mujhe theek se samajh nahi aaya, kripya dobara bolein.",
-                    )
-                else:
-                    response_text = self._execute_voice_action(prediction, command_to_classify)
-                    prediction["live_response"] = response_text
+                response_text = self._execute_voice_action(prediction, command_to_classify)
+                prediction["live_response"] = response_text
+                prediction["needs_clarification"] = False
 
                 self.state = VoiceState.SPEAKING
                 tts_service.speak(response_text, blocking=True)

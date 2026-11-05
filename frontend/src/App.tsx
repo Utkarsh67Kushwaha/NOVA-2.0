@@ -13,7 +13,6 @@ import {
   Radio,
   Send,
   Sparkles,
-  HelpCircle,
   Clock,
   Layers,
   Mic,
@@ -575,24 +574,17 @@ export default function App(): React.JSX.Element {
         const result: CommandResult = await res.json();
         setCommandResult(result);
 
-        if (result.needs_clarification) {
-          addLog(
-            `Unknown/Low-confidence command: "${text}" (Score: ${result.confidence_percent}%). Clarification requested.`,
-            'warn'
-          );
-        } else {
-          addLog(
-            `Intent: ${result.intent} | Confidence: ${result.confidence_percent}% | Latency: ${result.latency_ms}ms`,
-            'success'
-          );
-          if (result.executed_tool) {
-            addLog(`Dispatched safe tool: '${result.executed_tool}'`, 'info');
-          }
-          const redirectUrl =
-            result.tool_result?.data?.url || result.tool_result?.data?.search_url;
-          if (redirectUrl) {
-            openExternalUrl(redirectUrl);
-          }
+        addLog(
+          `Intent: ${result.intent} | Score: ${result.confidence_percent}% | Latency: ${result.latency_ms}ms`,
+          'success'
+        );
+        if (result.executed_tool) {
+          addLog(`Executed: '${result.executed_tool}'`, 'info');
+        }
+        const redirectUrl =
+          result.tool_result?.data?.url || result.tool_result?.data?.search_url;
+        if (redirectUrl) {
+          openExternalUrl(redirectUrl);
         }
         fetchAuditLog();
       } else {
@@ -1658,15 +1650,7 @@ export default function App(): React.JSX.Element {
                 />
               </div>
 
-              {/* Clarification Box if Low Confidence */}
-              {commandResult.needs_clarification && (
-                <div className="p-3 rounded bg-amber-500/10 border border-amber-500/30 flex items-start gap-2.5 text-xs text-amber-300">
-                  <HelpCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                  <div>
-                    <strong>Low Confidence Safety Threshold Active:</strong> {commandResult.clarification_message}
-                  </div>
-                </div>
-              )}
+
             </div>
           )}
         </div>
