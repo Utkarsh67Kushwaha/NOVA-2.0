@@ -34,6 +34,22 @@ KNOWN_APPS = [
 ]
 
 
+
+
+def strip_conversational_fillers(text: str) -> str:
+    """Strips colloquial Hindi/Hinglish filler words while preserving core intent."""
+    fillers = [
+        r'\b(?:bhai|yaar|bro|dude|buddy)\b',
+        r'\b(?:zara|thoda|thodi|thoda\s+sa|please|kripya)\b',
+        r'\b(?:arre|arey|oye|sun|suno)\b',
+        r'\b(?:ek\s+kaam\s+kar|dekh|dekho)\b',
+        r'\b(?:jaldi\s+se|turant|fast)\b',
+    ]
+    cleaned = text
+    for f in fillers:
+        cleaned = re.sub(f, '', cleaned, flags=re.IGNORECASE)
+    return re.sub(r'\s+', ' ', cleaned).strip()
+
 class IntentClassifierService:
     """Production service for intent prediction and entity extraction."""
 
@@ -245,6 +261,7 @@ class IntentClassifierService:
             }
 
         clean = self.normalize(text)
+        stripped = strip_conversational_fillers(clean)
         if not clean:
             return {
                 "intent": "UNKNOWN_INTENT",
@@ -253,16 +270,47 @@ class IntentClassifierService:
                 "clarification_message": "Command was empty. Please provide a command.",
             }
 
-        # 0. Screenshot & Screen Clip commands
-        if (
+        # Check conversational queries & AI questions
+        ai_chat_keywords = [
+            "tum kaun ho", "who are you", "naam kya hai", "what is your name", "kya naam hai",
+            "kaise ho", "how are you", "kya haal", "sab theek", "kaisa chal raha",
+            "hello", "hi nova", "namaste", "pranaam",
+            "kya kar sakte ho", "what can you do", "features", "madad", "help",
+            "aaj kya date", "today date", "tareekh", "what is the date",
+            "kitne baje", "kya time", "current time", "what time is it",
+            "joke", "chutkula", "hasao", "funny",
+            "who is", "what is", "kya hota hai", "kaun hai", "explain", "samjhao",
+            "kaise kare", "tell me about", "batao", "write a", "essay", "kavita", "shayari"
+        ]
+        # Only route to AI_CHAT if it doesn't match desktop hardware terms (like volume/brightness/screenshot/app)
+        has_hw = any(w in clean for w in ["volume", "sound", "aawaz", "brightness", "light", "screenshot", "lock", "pc", "kholo", "open", "gana", "song", "reminder", "alarm", "battery", "ram", "cpu", "disk", "memory", "storage", "spec", "hardware", "wifi", "network", "process", "task"])
+        if not has_hw and any(w in clean for w in ai_chat_keywords):
+            return {
+                "query": text,
+                "intent": "AI_CHAT",
+                "raw_intent": "AI_CHAT",
+                "confidence": 0.98,
+                "confidence_percent": 98.0,
+                "threshold": self.confidence_threshold,
+                "needs_clarification": False,
+                "entities": {"query": text},
+                "model_name": "RulePriority-Conversational",
+                "top_probabilities": {"AI_CHAT": 0.98},
+            }
+
+        # 0. Screenshot & Screen Clip commands (with photo/picture/tasveer synonyms)
+        is_sc = (
             re.search(r"\b(?:screenshot|screen\s*shot|screen\s*clip|screencapture|screen\s*capture)\b", clean)
-            or any(p in clean for p in [
+            or any(p in clean or p in stripped for p in [
                 "screenshot lo", "screenshot le lo", "sc le lo", "take screenshot", "take a screenshot",
                 "ek screenshot", "screen capture karo", "kheencho", "screen capture", "capture screen",
                 "screen shot lo", "screen shot le lo", "screenshot nikal lo", "screenshot lelo",
-                "sc lo", "sc kheencho", "sc lelo"
+                "sc lo", "sc kheencho", "sc lelo", "screen ka photo", "screen photo", "screen ki pic",
+                "screen capture", "desktop photo", "display photo"
             ])
-        ):
+            or (("screen" in clean or "desktop" in clean) and any(w in clean for w in ["photo", "pic", "tasveer", "snap", "snip"]))
+        )
+        if is_sc:
             return {
                 "query": text,
                 "intent": "OPEN_APP",
@@ -295,7 +343,7 @@ class IntentClassifierService:
 
         # 0.7 System Specs & Hardware Diagnostics Rules
         if any(p in clean for p in [
-            "battery kitni hai", "battery percent", "battery status", "charge kitna hai", "battery check",
+            "battery kitni hai", "battery percent", "battery percentage", "what is my battery", "battery status", "charge kitna hai", "battery check",
             "ram usage", "ram kitni", "memory usage", "cpu usage", "cpu load", "disk space",
             "storage kitni", "system specs", "system status", "hardware status"
         ]):
@@ -345,7 +393,11 @@ class IntentClassifierService:
                 "top_probabilities": {"SYSTEM_CONTROL": 0.98},
             }
 
-        if any(p in clean for p in ["volume badhao", "volume up", "sound badhao", "volume increase", "aawaz badhao", "volume thoda badhao"]):
+        has_vol = any(w in clean or w in stripped for w in ["volume", "sound", "aawaz", "awaj", "awaaz"])
+        is_vol_up = has_vol and any(w in clean or w in stripped for w in ["badha", "increase", "up", "tez", "high", "plus", "+"])
+        is_vol_down = has_vol and any(w in clean or w in stripped for w in ["kam", "ghata", "decrease", "down", "dheemi", "low", "minus", "-"])
+
+        if is_vol_up:
             return {
                 "query": text,
                 "intent": "SYSTEM_CONTROL",
@@ -359,7 +411,7 @@ class IntentClassifierService:
                 "top_probabilities": {"SYSTEM_CONTROL": 0.98},
             }
 
-        if any(p in clean for p in ["volume kam karo", "volume down", "sound kam karo", "volume decrease", "aawaz kam karo", "volume thoda kam karo"]):
+        if is_vol_down:
             return {
                 "query": text,
                 "intent": "SYSTEM_CONTROL",
@@ -424,7 +476,11 @@ class IntentClassifierService:
                 "top_probabilities": {"SYSTEM_CONTROL": 0.98},
             }
 
-        if any(p in clean for p in ["brightness badhao", "brightness up", "screen light badhao", "increase brightness", "brightness increase"]):
+        has_bright = any(w in clean or w in stripped for w in ["brightness", "screen light", "display light", "screen roshni"])
+        is_bright_up = has_bright and any(w in clean or w in stripped for w in ["badha", "increase", "up", "tez", "high", "plus", "+"])
+        is_bright_down = has_bright and any(w in clean or w in stripped for w in ["kam", "ghata", "decrease", "down", "low", "minus", "-"])
+
+        if is_bright_up:
             return {
                 "query": text,
                 "intent": "SYSTEM_CONTROL",
@@ -438,7 +494,7 @@ class IntentClassifierService:
                 "top_probabilities": {"SYSTEM_CONTROL": 0.98},
             }
 
-        if any(p in clean for p in ["brightness kam karo", "brightness down", "screen light kam karo", "decrease brightness", "brightness decrease"]):
+        if is_bright_down:
             return {
                 "query": text,
                 "intent": "SYSTEM_CONTROL",
@@ -493,19 +549,23 @@ class IntentClassifierService:
             }
 
         # Rule priority for hardware media transport control commands
-        media_pause_patterns = {
+        media_pause_patterns = [
             "stop", "pause", "pause the song", "pause music", "stop music", "stop the song",
-            "gana roko", "gana band karo", "music band karo", "ruk jao", "chup ho jao",
-            "pause karo", "pause kar do"
-        }
-        media_resume_patterns = {
+            "gana roko", "gana band karo", "gaana band", "music band karo", "ruk jao", "chup ho jao",
+            "pause karo", "pause kar do", "band kar do", "band karo"
+        ]
+        media_resume_patterns = [
             "play", "resume", "continue", "resume music", "resume song", "resume the song",
             "gana chalao", "wapas bajao", "aage play karo", "fir se chalao"
-        }
-        media_next_patterns = {"next song", "agla gana", "skip song", "next track", "skip"}
-        media_prev_patterns = {"previous song", "pichla gana", "prev song", "previous track"}
+        ]
+        media_next_patterns = ["next song", "agla gana", "skip song", "next track", "skip"]
+        media_prev_patterns = ["previous song", "pichla gana", "prev song", "previous track"]
 
-        if clean in media_pause_patterns:
+        has_media_stop = any(p in clean or p in stripped for p in media_pause_patterns) or (
+            any(w in clean or w in stripped for w in ["gana", "gaana", "music", "song"]) and
+            any(w in clean or w in stripped for w in ["band", "roko", "rok", "pause", "stop"])
+        )
+        if has_media_stop:
             return {
                 "query": text,
                 "intent": "PLAY_MUSIC",
@@ -573,9 +633,16 @@ class IntentClassifierService:
 
         # Confidence threshold check
         is_confident = confidence >= self.confidence_threshold
-        intent = predicted_class if is_confident else "UNKNOWN_INTENT"
-
-        entities = self.extract_entities(text, predicted_class)
+        if is_confident:
+            intent = predicted_class
+            entities = self.extract_entities(text, predicted_class)
+            needs_clar = False
+            clar_msg = None
+        else:
+            intent = "UNKNOWN_INTENT"
+            entities = {}
+            needs_clar = True
+            clar_msg = "Command confidence was below threshold. Please clarify your command."
 
         response = {
             "query": text,
@@ -584,17 +651,13 @@ class IntentClassifierService:
             "confidence": round(confidence, 4),
             "confidence_percent": round(confidence * 100, 2),
             "threshold": self.confidence_threshold,
-            "needs_clarification": not is_confident,
+            "needs_clarification": needs_clar,
             "entities": entities,
             "model_name": self.model_name,
             "top_probabilities": prob_dict,
         }
-
-        if not is_confident:
-            response["clarification_message"] = (
-                f"Confidence ({round(confidence * 100, 1)}%) was below threshold. "
-                f"Did you mean to perform a '{predicted_class}' action? Please clarify."
-            )
+        if clar_msg:
+            response["clarification_message"] = clar_msg
 
         return response
 

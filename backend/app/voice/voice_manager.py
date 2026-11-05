@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from backend.app.services.intent_service import intent_service
+from backend.app.services.gemini_service import gemini_service
 from backend.app.tools import default_registry
 from backend.app.voice.audio_capture import audio_capture
 from backend.app.voice.media_controller import media_controller
@@ -202,6 +203,12 @@ class VoiceAssistantManager:
             elif intent == "REMINDER":
                 time_exp = entities.get("time_expression", "")
                 return f"Reminder note kiya: {command} ({time_exp or 'samay specify nahi kiya'})."
+
+            elif intent in ("AI_CHAT", "UNKNOWN_INTENT"):
+                ans = gemini_service.ask(command)
+                prediction["executed_tool"] = "gemini_service"
+                prediction["tool_result"] = {"status": "success", "answer": ans}
+                return ans
 
             else:
                 intent_name = prediction.get("intent")

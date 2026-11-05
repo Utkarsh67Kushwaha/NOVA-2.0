@@ -11,6 +11,7 @@ import psutil
 from backend.app.core.config import settings
 from backend.app.core.logger import logger
 from backend.app.services.intent_service import intent_service
+from backend.app.services.gemini_service import gemini_service
 from backend.app.tools import default_registry
 from backend.app.system.hardware_controller import hardware_controller
 from backend.app.reminders.scheduler import reminder_scheduler
@@ -18,6 +19,10 @@ from backend.app.reminders.reminder_model import ReminderCreate
 
 router = APIRouter()
 START_TIME = time.time()
+
+
+class GeminiSettingsRequest(BaseModel):
+    api_key: str = Field(..., description="Google Gemini API Key", min_length=1)
 
 
 class CommandRequest(BaseModel):
@@ -174,11 +179,33 @@ async def process_command(request: CommandRequest) -> Dict[str, Any]:
             live_response = "File search intent detected. Please specify a file name or extension."
 
     elif intent == "PLAY_MUSIC":
-        track = entities.get("track_or_query", "music")
-        t_res = default_registry.execute("play_music", {"track": track})
-        executed_tool = "play_music"
-        tool_result = t_res.model_dump()
-        live_response = f"Opening '{track}' in Google Chrome."
+        action = entities.get("action", "play")
+        if action in ("pause", "stop"):
+            t_res = default_registry.execute("media_control", {"action": "pause"})
+            executed_tool = "media_control"
+            tool_result = t_res.model_dump()
+            live_response = "Media playback paused."
+        elif action in ("resume", "continue"):
+            t_res = default_registry.execute("media_control", {"action": "resume"})
+            executed_tool = "media_control"
+            tool_result = t_res.model_dump()
+            live_response = "Media playback resumed."
+        elif action == "next":
+            t_res = default_registry.execute("media_control", {"action": "next"})
+            executed_tool = "media_control"
+            tool_result = t_res.model_dump()
+            live_response = "Skipped to next track."
+        elif action == "previous":
+            t_res = default_registry.execute("media_control", {"action": "previous"})
+            executed_tool = "media_control"
+            tool_result = t_res.model_dump()
+            live_response = "Returned to previous track."
+        else:
+            track = entities.get("track_or_query", "music")
+            t_res = default_registry.execute("play_music", {"track": track})
+            executed_tool = "play_music"
+            tool_result = t_res.model_dump()
+            live_response = f"Opening '{track}' in Google Chrome."
 
     elif intent == "REMINDER":
         title = entities.get("title") or request.text
@@ -192,6 +219,11 @@ async def process_command(request: CommandRequest) -> Dict[str, Any]:
         executed_tool = "set_reminder"
         tool_result = t_res.model_dump()
         live_response = t_res.output
+
+    elif intent in ("AI_CHAT", "UNKNOWN_INTENT"):
+        live_response = gemini_service.ask(request.text)
+        executed_tool = "gemini_service"
+        tool_result = {"status": "success", "answer": live_response}
 
     prediction["live_response"] = live_response
     prediction["executed_tool"] = executed_tool
@@ -258,3 +290,25 @@ async def delete_reminder_endpoint(reminder_id: str) -> Dict[str, Any]:
         "deleted": deleted,
         "reminder_id": reminder_id,
     }
+
+@router.get("/api/settings/gemini")
+async def get_gemini_settings() -> Dict[str, Any]:
+    """Returns Gemini AI Brain status and model configuration."""
+    return {
+        "status": "success",
+        "is_configured": gemini_service.is_configured(),
+        "model": "gemini-2.5-flash",
+        "has_key": bool(gemini_service.api_key),
+    }
+
+
+@router.post("/api/settings/gemini")
+async def update_gemini_settings(payload: GeminiSettingsRequest) -> Dict[str, Any]:
+    """Updates and saves Gemini API Key."""
+    success = gemini_service.set_api_key(payload.api_key)
+    return {
+        "status": "success" if success else "error",
+        "is_configured": gemini_service.is_configured(),
+        "message": "Gemini API Key saved successfully!" if success else "Failed to save API key.",
+    }
+

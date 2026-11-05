@@ -81,9 +81,12 @@ class SpeechToTextService:
             return ""
 
         # Normalize audio peak to standard 0.90 to amplify soft/distant speech
+        # Dynamic noise gate & automatic gain control (AGC) for distant/soft voices
         peak = float(np.max(np.abs(audio_data)))
-        if peak > 0.005:
-            normalized_audio = (audio_data / peak) * 0.90
+        if peak > 0.0008:
+            # Clean tiny background mic hiss
+            cleaned = np.where(np.abs(audio_data) < 0.0002, 0.0, audio_data)
+            normalized_audio = (cleaned / peak) * 0.92
         else:
             normalized_audio = audio_data
 

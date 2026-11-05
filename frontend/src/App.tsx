@@ -28,6 +28,8 @@ import {
   Camera,
   Bell,
   Trash2,
+  Brain,
+  Key,
 } from 'lucide-react';
 import {
   HealthData,
@@ -52,16 +54,17 @@ interface LogEntry {
 const SAMPLE_COMMANDS = [
   'sc le lo',
   'take screenshot',
+  'bhai zara screen ka photo le le',
+  'bhai thoda volume badha de yaar',
   'spotify kholo please',
+  'tum kaun ho',
+  'kaise ho bhai',
+  'ek mast chutkula sunao',
+  'kya kar sakte ho',
   'battery kitne percent bachi hai',
   'play lofi beats for focus',
-  'volume 50 percent karo',
-  'brightness 70 kar do',
   'pc lock karo',
-  'downloads me resume.pdf dhoondo',
   'remind me to drink water at 5pm',
-  'summarize this uploaded pdf report',
-  'is python function me bug dhoond kar fix karo',
 ];
 
 export default function App(): React.JSX.Element {
@@ -97,6 +100,45 @@ export default function App(): React.JSX.Element {
     toolName: string;
   } | null>(null);
   const [isExecutingTool, setIsExecutingTool] = useState<boolean>(false);
+
+  // AI Conversational Brain & Gemini State
+  const [geminiStatus, setGeminiStatus] = useState<{ is_configured: boolean; model: string; has_key: boolean } | null>(null);
+  const [apiKeyInput, setApiKeyInput] = useState<string>('');
+  const [isSavingKey, setIsSavingKey] = useState<boolean>(false);
+
+  const fetchGeminiStatus = useCallback(async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/settings/gemini`);
+      if (res.ok) {
+        const data = await res.json();
+        setGeminiStatus(data);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const handleSaveApiKey = async () => {
+    if (!apiKeyInput.trim()) return;
+    setIsSavingKey(true);
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/settings/gemini`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ api_key: apiKeyInput }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        addLog(data.message || 'Gemini API Key updated successfully', 'success');
+        setApiKeyInput('');
+        fetchGeminiStatus();
+      }
+    } catch {
+      addLog('Failed to update Gemini API key', 'error');
+    } finally {
+      setIsSavingKey(false);
+    }
+  };
 
   // Phase 5: Reminders & Alarms State
   const [reminders, setReminders] = useState<ReminderItem[]>([]);
@@ -287,7 +329,8 @@ export default function App(): React.JSX.Element {
     fetchTools();
     fetchAuditLog();
     fetchReminders();
-  }, [fetchStatus, fetchTools, fetchAuditLog, fetchReminders]);
+    fetchGeminiStatus();
+  }, [fetchStatus, fetchTools, fetchAuditLog, fetchReminders, fetchGeminiStatus]);
 
   // Low-latency polling for voice status & wake-word events (snappy 1000ms when hands-free is active)
   useEffect(() => {
@@ -565,7 +608,7 @@ export default function App(): React.JSX.Element {
   const handleManualRefresh = async () => {
     setIsRefreshing(true);
     addLog('Manual diagnostic refresh requested.', 'info');
-    await Promise.all([fetchStatus(), fetchTools(), fetchAuditLog()]);
+    await Promise.all([fetchStatus(), fetchTools(), fetchAuditLog(), fetchGeminiStatus()]);
     setIsRefreshing(false);
     addLog('Diagnostic metrics refreshed.', 'success');
   };
@@ -1389,6 +1432,92 @@ export default function App(): React.JSX.Element {
                 })}
               </div>
             )}
+          </div>
+        </div>
+
+        {/* Universal AI Conversational Brain & Gemini Intelligence */}
+        <div className="rounded-xl bg-nova-panel border border-nova-border shadow-lg p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Brain className="w-5 h-5 text-purple-400" />
+              <h2 className="text-sm font-bold uppercase tracking-wider text-white">
+                Universal AI Conversational Brain (Gemini &amp; Offline Fallback)
+              </h2>
+            </div>
+            <div className="flex items-center gap-2">
+              <span
+                className={`text-[11px] px-2.5 py-0.5 rounded-full border flex items-center gap-1.5 ${
+                  geminiStatus?.is_configured
+                    ? 'bg-purple-500/10 text-purple-300 border-purple-500/30'
+                    : 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+                }`}
+              >
+                <span
+                  className={`w-1.5 h-1.5 rounded-full ${
+                    geminiStatus?.is_configured ? 'bg-purple-400' : 'bg-emerald-400'
+                  }`}
+                />
+                {geminiStatus?.is_configured ? 'Gemini 2.5 Flash Online' : 'Smart Offline Brain Active'}
+              </span>
+            </div>
+          </div>
+
+          <p className="text-xs text-slate-400 leading-relaxed">
+            NOVA is equipped with universal voice &amp; conversational intelligence. It effortlessly handles broken Hindi, pure English, casual Hinglish with slang words (&quot;bhai&quot;, &quot;yaar&quot;, &quot;zara&quot;), system controls, and open-domain chat without ever throwing confusion errors.
+          </p>
+
+          {/* Gemini API Key Configuration Row */}
+          <div className="p-3.5 rounded-lg bg-nova-dark/70 border border-nova-border flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+            <div className="flex items-center gap-2 text-xs text-slate-300 shrink-0">
+              <Key className="w-4 h-4 text-purple-400" />
+              <span>Google Gemini API Key:</span>
+            </div>
+            <input
+              type="password"
+              value={apiKeyInput}
+              onChange={(e) => setApiKeyInput(e.target.value)}
+              placeholder={geminiStatus?.has_key ? '•••••••••••••••••••••••••••••••• (Configured)' : 'Enter your free Google Gemini API key...'}
+              className="flex-1 px-3 py-1.5 rounded-md bg-nova-card border border-nova-border focus:border-purple-400 focus:outline-none text-xs text-white placeholder-slate-500 font-mono"
+            />
+            <button
+              onClick={handleSaveApiKey}
+              disabled={isSavingKey || !apiKeyInput.trim()}
+              className="px-4 py-1.5 rounded-md bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-semibold text-xs transition shrink-0"
+            >
+              {isSavingKey ? 'Saving...' : 'Save API Key'}
+            </button>
+          </div>
+
+          {/* Conversational & Casual Voice Quick Testers */}
+          <div className="space-y-1.5">
+            <span className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+              Casual Voice &amp; Conversational AI Prompts:
+            </span>
+            <div className="flex flex-wrap gap-2">
+              {[
+                'tum kaun ho',
+                'kaise ho bhai',
+                'kya kar sakte ho',
+                'ek mast chutkula sunao',
+                'aaj kya date hai',
+                'bhai zara screen ka photo le le',
+                'bhai thoda volume badha de yaar',
+                'bhai gaana band kar do bohot shor hai',
+                'screen capture karo',
+              ].map((sample, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => {
+                    setCommandInput(sample);
+                    handleClassifyCommand(sample);
+                  }}
+                  className="text-xs px-2.5 py-1 rounded-md bg-purple-950/30 hover:bg-purple-900/40 text-purple-200 border border-purple-800/40 transition font-mono"
+                >
+                  {sample}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
