@@ -202,7 +202,8 @@ def dispatch_intent(
         elif intent == "WHATSAPP_MESSAGE":
             msg = entities.get("message", "Hello")
             phone = entities.get("phone", "")
-            t_res = reg.execute("whatsapp_tool", {"message": msg, "phone": phone})
+            contact = entities.get("contact_name", "")
+            t_res = reg.execute("whatsapp_tool", {"message": msg, "phone": phone, "contact_name": contact})
             executed_tool = "whatsapp_tool"
             tool_result = t_res.model_dump()
             live_response = t_res.output

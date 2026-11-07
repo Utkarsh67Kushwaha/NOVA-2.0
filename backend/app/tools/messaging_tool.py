@@ -1,7 +1,7 @@
 """
 NOVA Safe Tools Framework - WhatsApp & Desktop Messaging Automation Tool
 Dispatches WhatsApp messages via native Windows URI protocol (whatsapp://send)
-with automatic fallback to Chrome Web WhatsApp.
+with automatic fallback to Chrome Web WhatsApp and contact recipient detection.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ import os
 import re
 import urllib.parse
 from typing import Any, Dict, List, Optional
-import subprocess
+import webbrowser
 
 from backend.app.tools.base import (
     BaseTool,
@@ -50,11 +50,41 @@ class WhatsAppTool(BaseTool):
                 required=False,
                 default="",
             ),
+            ToolParamSchema(
+                name="contact_name",
+                type="string",
+                description="Recipient contact name (e.g. 'Rahul', 'Priya'). Optional.",
+                required=False,
+                default="",
+            ),
         ]
+
+    def _normalize_phone(self, raw_phone: str) -> str:
+        """Strips non-digits and formats Indian numbers to 91XXXXXXXXXX."""
+        digits = re.sub(r"[^\d]", "", raw_phone)
+        if not digits:
+            return ""
+
+        # If 11 digits starting with 0 (e.g. 09876543210), strip the leading 0
+        if len(digits) == 11 and digits.startswith("0"):
+            digits = digits[1:]
+
+        # If 10 digits without country code, default to India (+91)
+        if len(digits) == 10:
+            return f"91{digits}"
+
+        return digits
 
     def execute(self, **kwargs: Any) -> ToolResult:
         raw_msg = str(kwargs.get("message", "")).strip()
         raw_phone = str(kwargs.get("phone", "")).strip()
+        contact_name = str(kwargs.get("contact_name", "")).strip()
+
+        # If letters were passed in phone (e.g. phone="Rahul"), extract as contact_name
+        if raw_phone and not any(char.isdigit() for char in raw_phone):
+            if not contact_name:
+                contact_name = raw_phone.capitalize()
+            raw_phone = ""
 
         if not raw_msg:
             return ToolResult(
@@ -64,38 +94,52 @@ class WhatsAppTool(BaseTool):
                 error="Empty message parameter",
             )
 
-        # Normalize phone number (strip spaces, dashes, parentheses)
-        clean_phone = re.sub(r"[^\d+]", "", raw_phone)
-        if clean_phone and len(clean_phone) == 10 and not clean_phone.startswith("+"):
-            # Default to India +91 if 10-digit number is provided without country code
-            clean_phone = f"91{clean_phone}"
+        clean_phone = self._normalize_phone(raw_phone) if raw_phone else ""
+        encoded_msg = urllib.parse.quote(raw_msg, safe="")
 
-        encoded_msg = urllib.parse.quote(raw_msg)
-
-        # 1. Try Windows native whatsapp:// URI protocol
+        # Construct URIs
         if clean_phone:
             uri = f"whatsapp://send?phone={clean_phone}&text={encoded_msg}"
             web_url = f"https://web.whatsapp.com/send?phone={clean_phone}&text={encoded_msg}"
+            target_desc = f"number {clean_phone}"
+        elif contact_name:
+            uri = f"whatsapp://send?text={encoded_msg}"
+            web_url = f"https://web.whatsapp.com/send?text={encoded_msg}"
+            target_desc = f"contact '{contact_name}'"
         else:
             uri = f"whatsapp://send?text={encoded_msg}"
             web_url = f"https://web.whatsapp.com/send?text={encoded_msg}"
+            target_desc = "WhatsApp"
 
         launched = False
+        launch_mode = "native_app"
+
         try:
-            # Try launching via Windows shell start command
-            os.startfile(uri)
-            launched = True
-            target_str = f"to {clean_phone}" if clean_phone else ""
-            output_msg = f"Opening WhatsApp {target_str} with message: \"{raw_msg}\"."
-        except Exception as exc:
-            logger.info("Native WhatsApp client not registered, falling back to Web WhatsApp: %s", exc)
-            # Fallback to Chrome / system default browser
-            try:
-                import webbrowser
+            # 1. Try Windows native whatsapp:// protocol if supported on OS
+            if hasattr(os, "startfile"):
+                os.startfile(uri)
+                launched = True
+            else:
+                # Linux/macOS or headless test environment fallback
                 webbrowser.open(web_url)
                 launched = True
-                target_str = f"to {clean_phone}" if clean_phone else ""
-                output_msg = f"Opening Web WhatsApp {target_str} with message: \"{raw_msg}\"."
+                launch_mode = "web_browser"
+
+            if contact_name and not clean_phone:
+                output_msg = (
+                    f"WhatsApp khol diya gaya hai message: \"{raw_msg}\" ke sath. "
+                    f"Kripya {contact_name} ko chat list se select karke send karein."
+                )
+            else:
+                output_msg = f"Opening WhatsApp for {target_desc} with message: \"{raw_msg}\"."
+
+        except Exception as exc:
+            logger.info("Native WhatsApp launch failed, falling back to Web WhatsApp: %s", exc)
+            try:
+                webbrowser.open(web_url)
+                launched = True
+                launch_mode = "web_browser"
+                output_msg = f"Opening Web WhatsApp for {target_desc} with message: \"{raw_msg}\"."
             except Exception as w_err:
                 logger.error("Failed to open Web WhatsApp: %s", w_err)
                 return ToolResult(
@@ -111,12 +155,14 @@ class WhatsAppTool(BaseTool):
             output=output_msg,
             data={
                 "phone": clean_phone,
+                "contact_name": contact_name,
                 "message": raw_msg,
                 "launched": launched,
+                "mode": launch_mode,
             },
             verification=VerificationResult(
                 verified=True,
-                method="whatsapp_uri_dispatch",
-                details="WhatsApp message draft opened successfully.",
+                method=f"whatsapp_{launch_mode}_dispatch",
+                details=f"WhatsApp draft triggered for {target_desc}.",
             ),
         )

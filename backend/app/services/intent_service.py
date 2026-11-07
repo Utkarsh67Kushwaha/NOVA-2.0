@@ -386,16 +386,21 @@ class IntentClassifierService:
 
         # 0.21 Live Real-Time Weather Intelligence
         if not is_search_query and any(w in clean for w in ["weather", "mausam", "temperature", "taapman"]):
+            weather_stopwords = {
+                "kaisa", "kya", "aaj", "today", "hai", "batao", "bataiye", "bata",
+                "check", "live", "kitna", "in", "of", "me", "ka", "ki"
+            }
             city_match = (
-                re.search(r'\b(?:weather|mausam|temperature|taapman)\s+(?:in|of|me|ka|ki)\s+([a-zA-Z]+)\b', clean)
-                or re.search(r'\b([a-zA-Z]+)\s+(?:ka|ki|me|in)\s+(?:weather|mausam|temperature|taapman)\b', clean)
-                or re.search(r'\b(?:weather|mausam|temperature|taapman)\s+([a-zA-Z]+)\b', clean)
+                re.search(r'\b(?:weather|mausam|temperature|taapman)\s+(?:in|of|me|ka|ki)\s+([a-zA-Z]+(?:\s+[a-zA-Z]+)?)\b', clean)
+                or re.search(r'\b([a-zA-Z]+(?:\s+[a-zA-Z]+)?)\s+(?:ka|ki|me|in)\s+(?:weather|mausam|temperature|taapman)\b', clean)
+                or re.search(r'\b(?:weather|mausam|temperature|taapman)\s+([a-zA-Z]+(?:\s+[a-zA-Z]+)?)\b', clean)
             )
             city = ""
             if city_match:
-                candidate = city_match.group(1).lower().strip()
-                if candidate not in ("kaisa", "kya", "aaj", "today", "hai", "batao", "bata", "check", "live", "kitna"):
-                    city = candidate
+                cand = city_match.group(1).strip()
+                words = [w for w in cand.split() if w not in weather_stopwords]
+                if words:
+                    city = " ".join(words)
 
             return {
                 "query": text,
@@ -433,8 +438,24 @@ class IntentClassifierService:
         if "whatsapp" in clean and any(w in clean for w in ["message", "msg", "bhejo", "bhej", "send", "text"]):
             phone_match = re.search(r'\b(?:to|par|pe|number)?\s*(\+?\d{10,12})\b', clean)
             phone = phone_match.group(1) if phone_match else ""
-            msg_match = re.search(r'(?::|message|msg|text|likho)\s+(.+)$', text, re.IGNORECASE)
-            msg = msg_match.group(1).strip() if msg_match else "Hello from NOVA!"
+
+            contact = ""
+            if not phone:
+                contact_match = (
+                    re.search(r'\bwhatsapp\s+(?:par|pe)?\s*([a-zA-Z]+)\s+ko\b', clean)
+                    or re.search(r'\b(?:message|msg|text)\s+to\s+([a-zA-Z]+)\s+on\s+whatsapp\b', clean)
+                    or re.search(r'\b(?:to|ko)\s+([a-zA-Z]+)\s+whatsapp\b', clean)
+                )
+                if contact_match:
+                    cand = contact_match.group(1).strip()
+                    if cand not in ("par", "pe", "ko", "se", "ek", "message", "msg", "text"):
+                        contact = cand.capitalize()
+
+            if ":" in text:
+                msg = text.split(":", 1)[1].strip()
+            else:
+                m = re.search(r'\b(?:bhejo|bhej do|send karo|send|likho|likh do|text karo)\s+(.+)$', text, re.IGNORECASE)
+                msg = m.group(1).strip() if m else "Hello from NOVA!"
 
             return {
                 "query": text,
@@ -444,7 +465,7 @@ class IntentClassifierService:
                 "confidence_percent": 98.0,
                 "threshold": self.confidence_threshold,
                 "needs_clarification": False,
-                "entities": {"phone": phone, "message": msg},
+                "entities": {"phone": phone, "contact_name": contact, "message": msg},
                 "model_name": "RulePriority-WhatsAppMessage",
                 "top_probabilities": {"WHATSAPP_MESSAGE": 0.98},
             }
