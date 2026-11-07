@@ -291,7 +291,7 @@ class VoiceAssistantManager:
                     )
                     if prediction.get("intent") != "PLAY_MUSIC":
                         # Resumes media after response
-                        time.sleep(0.3)
+                        time.sleep(0.1)
                         media_controller.resume_if_paused_by_voice()
                     elif action in ("pause", "stop", "play", "resume", "continue"):
                         media_controller.clear_paused_state()
@@ -404,7 +404,7 @@ class VoiceAssistantManager:
                     else None
                 )
                 if prediction.get("intent") != "PLAY_MUSIC":
-                    time.sleep(0.3)
+                    time.sleep(0.1)
                     media_controller.resume_if_paused_by_voice()
                 elif action in ("pause", "stop", "play", "resume", "continue"):
                     media_controller.clear_paused_state()

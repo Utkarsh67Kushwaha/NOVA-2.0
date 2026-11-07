@@ -148,6 +148,8 @@ export interface NovaIPCBridge {
   minimizeToTray: () => void;
   quitApp: () => void;
   openExternal: (url: string) => Promise<boolean>;
+  setCompactMode: (compact: boolean) => Promise<boolean>;
+  onSummon: (callback: () => void) => () => void;
   platform: string;
 }
 

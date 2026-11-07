@@ -185,12 +185,20 @@ class ReminderScheduler:
             logger.warning("Failed to show Windows toast: %s", e)
 
     def _save_to_disk(self):
+        """Persists reminders to disk atomically to prevent corruption."""
+        temp_path = self.storage_path.with_suffix(".tmp")
         try:
             data = [r.model_dump() for r in self.reminders]
-            with open(self.storage_path, "w", encoding="utf-8") as f:
+            with open(temp_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
+            temp_path.replace(self.storage_path)
         except Exception as e:
             logger.error("Failed to save reminders to disk: %s", e)
+            if temp_path.exists():
+                try:
+                    temp_path.unlink()
+                except Exception:
+                    pass
 
     def _load_from_disk(self):
         if not self.storage_path.exists():

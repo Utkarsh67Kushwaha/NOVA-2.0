@@ -168,6 +168,18 @@ ipcMain.handle('nova:set-login-startup', async (_event, enabled: boolean) => {
   return app.getLoginItemSettings().openAtLogin;
 });
 
+ipcMain.handle('nova:set-compact-mode', async (_event, compact: boolean) => {
+  if (!mainWindow) return false;
+  if (compact) {
+    mainWindow.setSize(760, 240);
+    mainWindow.center();
+  } else {
+    mainWindow.setSize(1120, 760);
+    mainWindow.center();
+  }
+  return true;
+});
+
 ipcMain.on('nova:minimize-to-tray', () => {
   mainWindow?.hide();
 });
@@ -207,6 +219,26 @@ if (!gotSingleInstanceLock && !isDev) {
         mainWindow.webContents.toggleDevTools();
       }
     });
+
+    // Global Summon Hotkey: Ctrl+Shift+Space or Alt+Space
+    const toggleSummon = () => {
+      if (!mainWindow) return;
+      if (mainWindow.isVisible() && mainWindow.isFocused()) {
+        mainWindow.hide();
+      } else {
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.show();
+        mainWindow.focus();
+        mainWindow.webContents.send('nova:summon');
+      }
+    };
+
+    try {
+      globalShortcut.register('CommandOrControl+Shift+Space', toggleSummon);
+      globalShortcut.register('Alt+Space', toggleSummon);
+    } catch (err) {
+      console.warn('Failed to register global summon shortcuts:', err);
+    }
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) {

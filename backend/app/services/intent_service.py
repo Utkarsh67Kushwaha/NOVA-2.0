@@ -3,6 +3,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 import joblib
+from backend.app.services.context_manager import context_manager
 import numpy as np
 
 logger = logging.getLogger("nova.intent_service")
@@ -31,6 +32,7 @@ KNOWN_APPS = [
     "brave",
     "settings",
     "task manager",
+    "vlc",
 ]
 
 
@@ -163,9 +165,32 @@ class IntentClassifierService:
         entities: Dict[str, Any] = {}
 
         if intent == "OPEN_APP":
-            for app in KNOWN_APPS:
-                if app in clean:
-                    entities["app_name"] = app
+            app_canonical_map = {
+                "chrome": "chrome", "browser": "chrome", "google chrome": "chrome",
+                "spotify": "spotify", "music app": "spotify",
+                "notepad": "notepad", "text editor": "notepad",
+                "calculator": "calculator", "calc": "calculator",
+                "vscode": "vscode", "visual studio code": "vscode", "code": "vscode",
+                "terminal": "cmd", "cmd": "cmd", "command prompt": "cmd",
+                "powershell": "powershell",
+                "explorer": "explorer", "file explorer": "explorer",
+                "settings": "settings",
+                "camera": "camera",
+                "paint": "paint",
+                "telegram": "telegram",
+                "discord": "discord",
+                "whatsapp": "whatsapp",
+                "brave": "brave",
+                "edge": "edge", "microsoft edge": "edge", "msedge": "edge",
+                "task manager": "task manager", "taskmanager": "task manager", "taskmgr": "task manager",
+                "word": "word", "microsoft word": "word",
+                "excel": "excel", "microsoft excel": "excel",
+                "vlc": "vlc",
+                "snippingtool": "screenshot", "screenshot": "screenshot", "sc": "screenshot",
+            }
+            for alias, canonical in app_canonical_map.items():
+                if alias in clean:
+                    entities["app_name"] = canonical
                     break
 
         elif intent == "PLAY_MUSIC":
@@ -240,7 +265,7 @@ class IntentClassifierService:
         elif intent == "BROWSER_ACTION":
             # Extract search query
             search_match = re.search(
-                r"(?:search|google par|google pe|youtube par|khojo)\s+(.+?)(?:\s+on\s+google|\s+in\s+browser|\s+on\s+youtube|$)",
+                r"(?:search|google par|google pe|youtube par|khojo|google karo|search karo)\s+(.+?)(?:\s+on\s+google|\s+in\s+browser|\s+on\s+youtube|$)",
                 clean,
             )
             if search_match:
@@ -301,6 +326,15 @@ class IntentClassifierService:
             "explorer": "explorer",
             "taskmanager": "task manager",
             "task manager": "task manager",
+            "taskmgr": "task manager",
+            "telegram": "telegram",
+            "discord": "discord",
+            "whatsapp": "whatsapp",
+            "brave": "brave",
+            "edge": "edge",
+            "word": "word",
+            "excel": "excel",
+            "vlc": "vlc",
         }
         if clean in direct_apps or stripped in direct_apps:
             app_id = direct_apps.get(clean, direct_apps.get(stripped))
@@ -363,6 +397,214 @@ class IntentClassifierService:
                 "top_probabilities": {"AI_CHAT": 0.98},
             }
 
+        # 0.25 Voice Math & Instant Calculator Rules
+        is_calc = (
+            bool(re.search(r'\b(?:calculate|hisab\s+karo|compute|solve)\b', clean))
+            or bool(re.search(r'\d+(?:\.\d+)?\s*(?:%|percent|pratishat)\s*(?:of|ka|pe|par|on|gst\s+on)?\s*\d+', clean))
+            or bool(re.search(r'\d+(?:\.\d+)?\s*(?:ka|of)\s*\d+(?:\.\d+)?\s*(?:%|percent|pratishat)', clean))
+            or (bool(re.search(r'\b\d+\s*(?:[\+\-\*\/]|\binto\b|\btimes\b|\bguna\b|\bdivided\s+by\b|\bbhag\b|\bplus\b|\bminus\b)\s*\d+', clean)) and any(w in clean for w in ["calculate", "kitna", "what is", "solve", "batao", "result", "answer", "equals"]))
+        )
+        if is_calc:
+            return {
+                "query": text,
+                "intent": "CALCULATE",
+                "raw_intent": "CALCULATE",
+                "confidence": 0.98,
+                "confidence_percent": 98.0,
+                "threshold": self.confidence_threshold,
+                "needs_clarification": False,
+                "entities": {"expression": text},
+                "model_name": "RulePriority-Calculator",
+                "top_probabilities": {"CALCULATE": 0.98},
+            }
+
+        # 0.26 Screen Vision & Desktop Multimodal Understanding
+        is_screen_vision = (
+            any(p in clean for p in [
+                "what's on my screen", "whats on my screen", "what is on my screen",
+                "what is on screen", "what's on screen", "whats on screen",
+                "screen par kya hai", "screen pe kya hai", "screen par kya chal raha hai", "screen pe kya chal raha hai",
+                "look at my screen", "look at the screen", "look at screen",
+                "screen dekho", "screen dekh kar batao", "screen dekh ke batao", "screen dekhna",
+                "describe screen", "describe my screen", "summarize screen", "summarize my screen",
+                "explain screen", "screen explain karo", "screen explain",
+                "explain this window", "explain active window", "active window explain",
+                "read my screen", "read screen", "display par kya hai", "display pe kya hai",
+                "desktop par kya hai", "desktop pe kya hai", "what am i looking at",
+                "ye window explain karo", "window me kya hai", "screen reading",
+            ])
+            or (("screen" in clean or "display" in clean or "desktop" in clean) and any(w in clean for w in ["kya chal raha", "kya chal rha", "kya dikh raha", "kya dikh rha", "explain karo", "samjhao", "summarize karo", "dekh kar batao", "dekh ke batao"]))
+        )
+        if is_screen_vision:
+            return {
+                "query": text,
+                "intent": "SCREEN_VISION",
+                "raw_intent": "SCREEN_VISION",
+                "confidence": 0.98,
+                "confidence_percent": 98.0,
+                "threshold": self.confidence_threshold,
+                "needs_clarification": False,
+                "entities": {"prompt": text},
+                "model_name": "RulePriority-ScreenVision",
+                "top_probabilities": {"SCREEN_VISION": 0.98},
+            }
+
+        # 0.27 Windows System Maintenance & Quick Folders
+        recycle_empty_pat = r'\b(?:empty\s+recycle\s*bin|recycle\s*bin\s+saaf|recycle\s*bin\s+khali|empty\s+trash|trash\s+saaf|kachra\s+saaf|clean\s+recycle\s*bin)\b'
+        folder_open_pat = r'\b(?:open|kholo|launch)\s+(?:my\s+)?(downloads?|documents?|desktop|pictures?|photos?|videos?|project|workspace|recycle\s*bin)(?:\s+folder)?\b|\b(downloads?|documents?|desktop|pictures?|photos?|videos?|project|workspace|recycle\s*bin)(?:\s+folder)?\s+(?:kholo|open|chalao)\b'
+        proc_pat = r'\b(?:top\s+processes|top\s+ram|ram\s+kaun|cpu\s+kaun|highest\s+memory|resource\s+usage|heavy\s+apps)\b'
+        net_pat = r'\b(?:internet\s+check|check\s+internet|network\s+status|ping\s+check|internet\s+chal\s+raha)\b'
+        disk_pat = r'\b(?:all\s+drives\s+status|drives\s+breakdown|drives\s+check|hard\s+drive\s+space)\b'
+
+        if re.search(recycle_empty_pat, clean):
+            return {
+                "query": text,
+                "intent": "SYSTEM_MAINTENANCE",
+                "raw_intent": "SYSTEM_MAINTENANCE",
+                "confidence": 0.98,
+                "confidence_percent": 98.0,
+                "threshold": self.confidence_threshold,
+                "needs_clarification": False,
+                "entities": {"action": "empty_recycle_bin", "target": "recycle bin"},
+                "model_name": "RulePriority-SystemMaintenance",
+                "top_probabilities": {"SYSTEM_MAINTENANCE": 0.98},
+            }
+
+        folder_m = re.search(folder_open_pat, clean)
+        if folder_m:
+            raw_folder = (folder_m.group(1) or folder_m.group(2)).lower().strip()
+            folder_canonical = {
+                "download": "downloads",
+                "downloads": "downloads",
+                "document": "documents",
+                "documents": "documents",
+                "desktop": "desktop",
+                "picture": "pictures",
+                "pictures": "pictures",
+                "photo": "pictures",
+                "photos": "pictures",
+                "video": "videos",
+                "videos": "videos",
+                "project": "project",
+                "workspace": "project",
+                "recycle bin": "recycle bin",
+                "recyclebin": "recycle bin",
+            }.get(raw_folder, raw_folder)
+            return {
+                "query": text,
+                "intent": "SYSTEM_MAINTENANCE",
+                "raw_intent": "SYSTEM_MAINTENANCE",
+                "confidence": 0.98,
+                "confidence_percent": 98.0,
+                "threshold": self.confidence_threshold,
+                "needs_clarification": False,
+                "entities": {"action": "open_folder", "target": folder_canonical},
+                "model_name": "RulePriority-SystemMaintenance",
+                "top_probabilities": {"SYSTEM_MAINTENANCE": 0.98},
+            }
+
+        if re.search(proc_pat, clean):
+            return {
+                "query": text,
+                "intent": "SYSTEM_MAINTENANCE",
+                "raw_intent": "SYSTEM_MAINTENANCE",
+                "confidence": 0.98,
+                "confidence_percent": 98.0,
+                "threshold": self.confidence_threshold,
+                "needs_clarification": False,
+                "entities": {"action": "process_diagnostics", "target": "processes"},
+                "model_name": "RulePriority-SystemMaintenance",
+                "top_probabilities": {"SYSTEM_MAINTENANCE": 0.98},
+            }
+
+        if re.search(net_pat, clean):
+            return {
+                "query": text,
+                "intent": "SYSTEM_MAINTENANCE",
+                "raw_intent": "SYSTEM_MAINTENANCE",
+                "confidence": 0.98,
+                "confidence_percent": 98.0,
+                "threshold": self.confidence_threshold,
+                "needs_clarification": False,
+                "entities": {"action": "network_status", "target": "network"},
+                "model_name": "RulePriority-SystemMaintenance",
+                "top_probabilities": {"SYSTEM_MAINTENANCE": 0.98},
+            }
+
+        if re.search(disk_pat, clean):
+            return {
+                "query": text,
+                "intent": "SYSTEM_MAINTENANCE",
+                "raw_intent": "SYSTEM_MAINTENANCE",
+                "confidence": 0.98,
+                "confidence_percent": 98.0,
+                "threshold": self.confidence_threshold,
+                "needs_clarification": False,
+                "entities": {"action": "disk_breakdown", "target": "drives"},
+                "model_name": "RulePriority-SystemMaintenance",
+                "top_probabilities": {"SYSTEM_MAINTENANCE": 0.98},
+            }
+
+        # 0.28 Hands-Free Voice Keyboard & Desktop Shortcuts
+        hotkey_patterns = [
+            (r'\b(?:new\s+tab|open\s+new\s+tab|naya\s+tab)\b', 'new_tab'),
+            (r'\b(?:close\s+tab|tab\s+band|tab\s+close)\b', 'close_tab'),
+            (r'\b(?:reopen\s+tab|closed\s+tab|pichla\s+tab\s+kholo)\b', 'reopen_tab'),
+            (r'\b(?:next\s+tab|tab\s+switch|agla\s+tab)\b', 'next_tab'),
+            (r'\b(?:prev\s+tab|previous\s+tab)\b', 'prev_tab'),
+            (r'\b(?:copy\s+karo|copy\s+this|copy\s+kar\s+lo)\b', 'copy'),
+            (r'\b(?:paste\s+karo|paste\s+here|paste\s+kar\s+do)\b', 'paste'),
+            (r'\b(?:cut\s+karo|cut\s+this)\b', 'cut'),
+            (r'\b(?:select\s+all|sab\s+select|poora\s+select)\b', 'select_all'),
+            (r'\b(?:save\s+karo|save\s+file|document\s+save)\b', 'save'),
+            (r'\b(?:undo\s+karo|undo\s+this)\b', 'undo'),
+            (r'\b(?:redo\s+karo)\b', 'redo'),
+            (r'\b(?:refresh\s+karo|reload\s+karo|reload\s+page|page\s+refresh)\b', 'refresh'),
+            (r'\b(?:full\s*screen|exit\s+fullscreen)\b', 'fullscreen'),
+            (r'\b(?:zoom\s+in|zoom\s+badhao)\b', 'zoom_in'),
+            (r'\b(?:zoom\s+out|zoom\s+kam\s+karo)\b', 'zoom_out'),
+            (r'\b(?:zoom\s+reset|zoom\s+normal)\b', 'zoom_reset'),
+            (r'\b(?:show\s+desktop|desktop\s+dikhao)\b', 'show_desktop'),
+            (r'\b(?:switch\s+window|alt\s+tab|window\s+switch)\b', 'switch_window'),
+        ]
+        for pat, act in hotkey_patterns:
+            if re.search(pat, clean):
+                return {
+                    "query": text,
+                    "intent": "KEYBOARD_ACTION",
+                    "raw_intent": "KEYBOARD_ACTION",
+                    "confidence": 0.98,
+                    "confidence_percent": 98.0,
+                    "threshold": self.confidence_threshold,
+                    "needs_clarification": False,
+                    "entities": {"action": act},
+                    "model_name": "RulePriority-KeyboardShortcut",
+                    "top_probabilities": {"KEYBOARD_ACTION": 0.98},
+                }
+
+        # 0.29 Deep Multi-Engine Web Search (YouTube, GitHub, Wikipedia, Amazon, StackOverflow, etc.)
+        deep_search_m = (
+            re.search(r'\b(?:search\s+on|search|dhoondo|khojo)\s+(youtube|github|wikipedia|amazon|stackoverflow|reddit|twitter|google|bing|duckduckgo)\s+(?:for|pe|par|me)?\s*(.+)', clean)
+            or re.search(r'\b(youtube|github|wikipedia|amazon|stackoverflow|reddit|twitter)\s+(?:par|pe|me)\s+(?:search\s+karo|khojo|dhoondo)\s*(.+)', clean)
+        )
+        if deep_search_m:
+            engine = deep_search_m.group(1).lower().strip()
+            search_query = deep_search_m.group(2).strip()
+            search_query = re.sub(r'^(?:for|pe|par|me|about)\s+', '', search_query, flags=re.IGNORECASE)
+            search_query = re.sub(r'\s+(?:karo|khojo|dhoondo)$', '', search_query, flags=re.IGNORECASE).strip()
+            return {
+                "query": text,
+                "intent": "BROWSER_ACTION",
+                "raw_intent": "BROWSER_ACTION",
+                "confidence": 0.98,
+                "confidence_percent": 98.0,
+                "threshold": self.confidence_threshold,
+                "needs_clarification": False,
+                "entities": {"search_query": search_query, "engine": engine},
+                "model_name": "RulePriority-DeepSearch",
+                "top_probabilities": {"BROWSER_ACTION": 0.98},
+            }
+
         # Check conversational queries & AI questions
         ai_chat_keywords = [
             "tum kaun ho", "who are you", "naam kya hai", "what is your name", "kya naam hai",
@@ -376,7 +618,7 @@ class IntentClassifierService:
             "kaise kare", "tell me about", "batao", "write a", "essay", "kavita", "shayari"
         ]
         # Only route to AI_CHAT if it doesn't match desktop hardware terms (like volume/brightness/screenshot/app)
-        has_hw = any(w in clean for w in ["volume", "sound", "aawaz", "brightness", "light", "screenshot", "lock", "pc", "kholo", "open", "gana", "song", "reminder", "alarm", "battery", "ram", "cpu", "disk", "memory", "storage", "spec", "hardware", "wifi", "network", "process", "task"])
+        has_hw = any(w in clean for w in ["volume", "sound", "aawaz", "brightness", "light", "screenshot", "lock", "pc", "kholo", "open", "gana", "song", "reminder", "alarm", "battery", "ram", "cpu", "disk", "memory", "storage", "spec", "hardware", "wifi", "network", "process", "task", "recycle", "trash", "downloads", "documents", "internet", "ping", "tab", "copy", "paste", "cut", "select", "undo", "redo", "zoom", "fullscreen", "refresh"])
         if not has_hw and any(w in clean for w in ai_chat_keywords):
             return {
                 "query": text,
@@ -419,8 +661,8 @@ class IntentClassifierService:
 
         # 0.5 App Launching Rules (e.g., "notepad kholo", "open calculator", "browser kholo")
         app_open_match = (
-            re.search(r"\b(?:open|launch|kholo|chalao|start)\s+(notepad|calculator|calc|chrome|browser|spotify|code|vscode|terminal|cmd|powershell|explorer|settings|camera|paint)\b", clean)
-            or re.search(r"\b(notepad|calculator|calc|chrome|browser|spotify|code|vscode|terminal|cmd|powershell|explorer|settings|camera|paint)\s+(?:kholo|open|launch|chalao|start)\b", clean)
+            re.search(r"\b(?:open|launch|kholo|chalao|start|shuru|chala)\s+(notepad|calculator|calc|chrome|browser|spotify|code|vscode|terminal|cmd|powershell|explorer|settings|camera|paint|telegram|discord|whatsapp|brave|edge|task\s*manager|taskmgr|word|excel|vlc)\b", clean)
+            or re.search(r"\b(notepad|calculator|calc|chrome|browser|spotify|code|vscode|terminal|cmd|powershell|explorer|settings|camera|paint|telegram|discord|whatsapp|brave|edge|task\s*manager|taskmgr|word|excel|vlc)\s+(?:kholo|open|launch|chalao|start|chala\s*do|chala\s*de|kholna\s*hai)\b", clean)
         )
         if app_open_match:
             raw_app = app_open_match.group(1).lower().strip()
@@ -429,6 +671,17 @@ class IntentClassifierService:
                 "browser": "chrome",
                 "code": "vscode",
                 "terminal": "cmd",
+                "task manager": "task manager",
+                "taskmanager": "task manager",
+                "taskmgr": "task manager",
+                "edge": "edge",
+                "brave": "brave",
+                "telegram": "telegram",
+                "discord": "discord",
+                "whatsapp": "whatsapp",
+                "word": "word",
+                "excel": "excel",
+                "vlc": "vlc",
             }
             app_id = canonical_map.get(raw_app, raw_app)
             return {
@@ -444,18 +697,31 @@ class IntentClassifierService:
                 "top_probabilities": {"OPEN_APP": 0.98},
             }
 
-        # 0.51 App Termination & Close Rules (e.g., 'close notepad', 'notepad band karo', 'exit chrome')
+        # 0.51 App Termination & Close Rules (e.g., 'close notepad', 'notepad band karo', 'exit chrome', 'isko band karo')
         app_close_match = (
-            re.search(r'\b(?:close|quit|exit|terminate|kill|band\s+karo|band\s+kar\s+do|hatao|band)\s+(notepad|calculator|calc|chrome|browser|spotify|code|vscode|terminal|cmd|powershell|explorer|settings|camera|paint)\b', clean)
-            or re.search(r'\b(notepad|calculator|calc|chrome|browser|spotify|code|vscode|terminal|cmd|powershell|explorer|settings|camera|paint)\s+(?:close|quit|exit|terminate|kill|band\s+karo|band\s+kar\s+do|hatao|band)\b', clean)
+            re.search(r'\b(?:close|quit|exit|terminate|kill|band\s+karo|band\s+kar\s+do|hatao|band)\s+(notepad|calculator|calc|chrome|browser|spotify|code|vscode|terminal|cmd|powershell|explorer|settings|camera|paint|telegram|discord|whatsapp|brave|edge|task\s*manager|taskmgr|word|excel|vlc|isko|ise|isey|use|usey|usko|it|this)\b', clean)
+            or re.search(r'\b(notepad|calculator|calc|chrome|browser|spotify|code|vscode|terminal|cmd|powershell|explorer|settings|camera|paint|telegram|discord|whatsapp|brave|edge|task\s*manager|taskmgr|word|excel|vlc|isko|ise|isey|use|usey|usko|it|this)\s+(?:close|quit|exit|terminate|kill|band\s+karo|band\s+kar\s+do|hatao|band)\b', clean)
         )
         if app_close_match:
             raw_app = app_close_match.group(1).lower().strip()
+            if raw_app in ('isko', 'ise', 'isey', 'use', 'usey', 'usko', 'it', 'this'):
+                raw_app = context_manager.last_app or raw_app
             canonical_map = {
                 'calc': 'calculator',
                 'browser': 'chrome',
                 'code': 'vscode',
                 'terminal': 'cmd',
+                'task manager': 'task manager',
+                'taskmanager': 'task manager',
+                'taskmgr': 'task manager',
+                'edge': 'edge',
+                'brave': 'brave',
+                'telegram': 'telegram',
+                'discord': 'discord',
+                'whatsapp': 'whatsapp',
+                'word': 'word',
+                'excel': 'excel',
+                'vlc': 'vlc',
             }
             app_id = canonical_map.get(raw_app, raw_app)
             return {
@@ -471,16 +737,18 @@ class IntentClassifierService:
                 'top_probabilities': {'CLOSE_APP': 0.98},
             }
 
-        # 0.52 Window Management Rules (e.g., 'minimize chrome', 'maximize notepad', 'focus vscode')
+        # 0.52 Window Management Rules (e.g., 'minimize chrome', 'maximize notepad', 'focus vscode', 'isko minimize karo')
         win_match = (
-            re.search(r'\b(minimize|maximize|focus|restore)\s+(notepad|calculator|calc|chrome|browser|spotify|code|vscode|terminal|cmd|powershell|window)\b', clean)
-            or re.search(r'\b(notepad|calculator|calc|chrome|browser|spotify|code|vscode|terminal|cmd|powershell|window)\s+(?:ko\s+)?(minimize|maximize|focus|restore)\b', clean)
+            re.search(r'\b(minimize|maximize|focus|restore)\s+(notepad|calculator|calc|chrome|browser|spotify|code|vscode|terminal|cmd|powershell|window|telegram|discord|whatsapp|brave|edge|word|excel|isko|ise|isey|use|usey|usko|it|this)\b', clean)
+            or re.search(r'\b(notepad|calculator|calc|chrome|browser|spotify|code|vscode|terminal|cmd|powershell|window|telegram|discord|whatsapp|brave|edge|word|excel|isko|ise|isey|use|usey|usko|it|this)\s+(?:ko\s+)?(minimize|maximize|focus|restore)\b', clean)
         )
         if win_match:
             g1, g2 = win_match.group(1).lower().strip(), win_match.group(2).lower().strip()
             actions = {'minimize', 'maximize', 'focus', 'restore'}
             action = g1 if g1 in actions else g2
             target = g2 if g1 in actions else g1
+            if target in ('isko', 'ise', 'isey', 'use', 'usey', 'usko', 'it', 'this'):
+                target = context_manager.last_app or target
             return {
                 'query': text,
                 'intent': 'WINDOW_ACTION',
@@ -514,6 +782,53 @@ class IntentClassifierService:
                 'top_probabilities': {'CLIPBOARD_ACTION': 0.98},
             }
 
+        # 0.54 Smart Voice Notes & Scratchpad Rules (e.g., 'note likho: ...', 'take a note ...', 'show notes')
+        has_note_keyword = bool(re.search(r'\b(?:notes?|scratchpad)\b', clean))
+        if has_note_keyword:
+            action = "list"
+            content_text = ""
+
+            # Check notepad export
+            if any(w in clean for w in ["notepad", "file me", "editor me"]):
+                action = "open_notepad"
+            # Check clear/delete all
+            elif any(w in clean for w in ["clear", "saaf", "empty", "delete all", "hatao"]):
+                action = "clear"
+            # Check read latest
+            elif any(w in clean for w in ["latest", "last", "aakhri", "recent"]):
+                action = "read_latest"
+            # Check list / read notes
+            elif any(w in clean for w in ["read", "show", "dikhao", "batao", "padho", "kya hai", "list", "view"]):
+                action = "list"
+            # Check create note
+            else:
+                create_match = re.search(
+                    r'(?:take\s+a\s+note|add\s+a\s+note|write\s+a\s+note|make\s+a\s+note|note\s+down|note\s+likho|ek\s+note\s+likho|note\s+banao|note\s+karo|note\s+save\s+karo|note)\s*(?:ki|that|:)?\s*(.+)',
+                    clean,
+                    flags=re.IGNORECASE
+                )
+                if create_match and create_match.group(1).strip():
+                    action = "create"
+                    content_text = create_match.group(1).strip()
+                elif any(w in clean for w in ["likho", "banao", "save", "add", "take", "write"]):
+                    rem = re.sub(r'\b(?:take|add|write|make|note|notes|likho|banao|karo|save|down|ek|zara|please)\b', '', clean, flags=re.IGNORECASE).strip(' :-,')
+                    if rem:
+                        action = "create"
+                        content_text = rem
+
+            return {
+                'query': text,
+                'intent': 'NOTE_ACTION',
+                'raw_intent': 'NOTE_ACTION',
+                'confidence': 0.98,
+                'confidence_percent': 98.0,
+                'threshold': self.confidence_threshold,
+                'needs_clarification': False,
+                'entities': {'action': action, 'content': content_text},
+                'model_name': 'RulePriority-Notes',
+                'top_probabilities': {'NOTE_ACTION': 0.98},
+            }
+
         # 0.7 System Specs & Hardware Diagnostics Rules
         if any(p in clean for p in [
             "battery kitni hai", "battery percent", "battery percentage", "what is my battery", "battery status", "charge kitna hai", "battery check",
@@ -545,7 +860,7 @@ class IntentClassifierService:
         # Rule priority for Hardware & System Controls (Volume, Brightness, Lock)
         # 1. Volume commands
         vol_set_match = re.search(
-            r"\b(?:volume|sound|aawaz)\s+(?:ko\s+)?(\d{1,3})\s*(?:%|percent)?(?:\s*(?:pe|par|karo|set|kar do))?\b",
+            r"\b(?:volume|sound|aawaz)\s+(?:ko\s+)?(\d{1,3})\s*(?:%|percent)?(?:\s+(?:pe|par|karo|set|kar\s*do|pe\s*karo|par\s*karo))*\b",
             clean,
         ) or re.search(
             r"\b(?:set\s+)?(?:volume|sound|aawaz)\s+(?:to\s+)?(\d{1,3})\s*(?:%|percent)?\b",
@@ -612,7 +927,7 @@ class IntentClassifierService:
                 "top_probabilities": {"SYSTEM_CONTROL": 0.98},
             }
 
-        if any(p in clean for p in ["mute system", "mute audio", "system mute", "mute sound", "volume mute", "mute kar do", "mute karo"]):
+        if any(p in clean for p in ["mute system", "mute audio", "system mute", "mute sound", "volume mute", "mute kar do", "mute karo", "aawaz band karo", "aawaz band kar do", "sound band karo", "sound band kar do", "aawaz band"]):
             return {
                 "query": text,
                 "intent": "SYSTEM_CONTROL",
@@ -628,7 +943,7 @@ class IntentClassifierService:
 
         # 2. Brightness commands
         bright_set_match = re.search(
-            r"\b(?:brightness|screen\s+light|screen\s+brightness)\s+(?:ko\s+)?(\d{1,3})\s*(?:%|percent)?(?:\s*(?:pe|par|karo|set|kar do))?\b",
+            r"\b(?:brightness|screen\s+light|screen\s+brightness|light)\s+(?:ko\s+)?(\d{1,3})\s*(?:%|percent)?(?:\s+(?:pe|par|karo|set|kar\s*do|pe\s*karo|par\s*karo))*\b",
             clean,
         ) or re.search(
             r"\b(?:set\s+)?(?:brightness|screen\s+light)\s+(?:to\s+)?(\d{1,3})\s*(?:%|percent)?\b",
@@ -773,7 +1088,7 @@ class IntentClassifierService:
                 "top_probabilities": {"PLAY_MUSIC": 0.98},
             }
 
-        if clean in ["next", "skip"] or stripped in ["next", "skip"] or any(p in clean or p in stripped for p in ["next song", "agla gana", "skip song", "next track"]):
+        if clean in ["next", "skip"] or stripped in ["next", "skip"] or any(p in clean or p in stripped for p in ["next song", "agla gana", "skip song", "next track", "skip track", "track skip"]):
             return {
                 "query": text,
                 "intent": "PLAY_MUSIC",
@@ -803,12 +1118,16 @@ class IntentClassifierService:
 
         has_music_indicator = any(re.search(r"\b" + re.escape(w) + r"\b", clean) for w in ["gana", "gaana", "gaane", "gane", "music", "song", "songs", "geet", "track", "spotify"])
         has_play_verb = any(re.search(r"\b" + re.escape(w) + r"\b", clean) for w in ["play", "chala", "chalao", "bajao", "baja", "sunao", "suna", "lagao", "laga", "resume"])
-        is_generic_play = clean in ["play", "resume", "continue"] or stripped in ["play", "resume", "continue"]
+        is_generic_play = (
+            clean in ["play", "resume", "continue", "wapas bajao", "fir se bajao", "dobara bajao", "fir se chalao"]
+            or stripped in ["play", "resume", "continue", "wapas bajao", "fir se bajao", "dobara bajao", "fir se chalao"]
+            or any(p in clean for p in ["wapas bajao", "fir se chalao", "dobara chalao", "fir se bajao"])
+        )
 
         if (has_music_indicator or is_generic_play or (has_play_verb and not is_search_query)):
             t = clean
             filler_patterns = [
-                r"\b(?:bhai|hey|ok|kripya|please|suno|nova|chal|beta|yaar|dost)\b",
+                r"\b(?:bhai|hey|ok|kripya|please|suno|nova|chal|beta|yaar|dost|wapas|fir\s+se|dobara|again)\b",
                 r"\b(?:play\s+karo|play\s+kar\s+do|play|resume|continue)\b",
                 r"\b(?:chala\s+de|chala\s+do|chalao|chala|chalaye)\b",
                 r"\b(?:baja\s+de|baja\s+do|bajao|baja|bajaye)\b",

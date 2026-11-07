@@ -20,6 +20,11 @@ from backend.app.tools.desktop_tools import (
     ListRemindersTool,
     CloseAppTool,
     ClipboardTool,
+    NoteTool,
+    ScreenVisionTool,
+    CalculatorTool,
+    SystemMaintenanceTool,
+    KeyboardShortcutTool,
 )
 from backend.app.tools.browser_tools import OpenUrlTool, WebSearchTool, PlayMusicTool
 from backend.app.tools.file_tools import (
@@ -36,6 +41,11 @@ def setup_default_tools(registry: ToolRegistry = default_registry) -> ToolRegist
     registry.register(LaunchAppTool())
     registry.register(CloseAppTool())
     registry.register(ClipboardTool())
+    registry.register(NoteTool())
+    registry.register(ScreenVisionTool())
+    registry.register(CalculatorTool())
+    registry.register(SystemMaintenanceTool())
+    registry.register(KeyboardShortcutTool())
     registry.register(SystemStatusTool())
     registry.register(ManageWindowTool())
     registry.register(TakeScreenshotTool())
@@ -77,4 +87,5 @@ __all__ = [
     "CloseAppTool",
     "ClipboardTool",
     "PlayMusicTool",
+    "NoteTool",
 ]

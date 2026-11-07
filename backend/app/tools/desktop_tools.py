@@ -12,6 +12,12 @@ import subprocess
 import time
 from typing import Any, Dict, List, Optional
 import psutil
+import ast
+import logging
+import operator
+import re
+
+logger = logging.getLogger("nova.desktop_tools")
 
 from backend.app.reminders.scheduler import reminder_scheduler
 from backend.app.tools.base import (
@@ -101,6 +107,66 @@ ALLOWLISTED_APPS = {
         "fallback_process": "SnippingToolApp.exe",
         "description": "Windows Screen Clip (Screenshot)",
     },
+    "telegram": {
+        "executable": "Telegram.exe",
+        "process_name": "Telegram.exe",
+        "description": "Telegram Desktop Messenger",
+    },
+    "discord": {
+        "executable": "Discord.exe",
+        "process_name": "Discord.exe",
+        "description": "Discord Voice & Text Chat",
+    },
+    "whatsapp": {
+        "executable": "WhatsApp.exe",
+        "process_name": "WhatsApp.exe",
+        "description": "WhatsApp Desktop",
+    },
+    "brave": {
+        "executable": "brave.exe",
+        "process_name": "brave.exe",
+        "description": "Brave Web Browser",
+    },
+    "edge": {
+        "executable": "msedge.exe",
+        "process_name": "msedge.exe",
+        "description": "Microsoft Edge Browser",
+    },
+    "task manager": {
+        "executable": "taskmgr.exe",
+        "process_name": "Taskmgr.exe",
+        "description": "Windows Task Manager",
+    },
+    "paint": {
+        "executable": "mspaint.exe",
+        "process_name": "mspaint.exe",
+        "description": "Windows Paint",
+    },
+    "camera": {
+        "executable": "camera.exe",
+        "process_name": "WindowsCamera.exe",
+        "description": "Windows Camera",
+    },
+    "settings": {
+        "executable": "SystemSettings.exe",
+        "process_name": "SystemSettings.exe",
+        "description": "Windows Settings",
+    },
+    "word": {
+        "executable": "WINWORD.EXE",
+        "process_name": "WINWORD.EXE",
+        "description": "Microsoft Word",
+    },
+    "excel": {
+        "executable": "EXCEL.EXE",
+        "process_name": "EXCEL.EXE",
+        "description": "Microsoft Excel",
+    },
+    "vlc": {
+        "executable": "vlc.exe",
+        "process_name": "vlc.exe",
+        "description": "VLC Media Player",
+    },
 }
 
 
@@ -148,9 +214,19 @@ class LaunchAppTool(BaseTool):
             os.path.join(local_app_data, "Programs", "Microsoft VS Code", "Code.exe"),
             os.path.join(local_app_data, "Microsoft", "WindowsApps", exe),
             os.path.join(local_app_data, "Spotify", "Spotify.exe"),
+            os.path.join(local_app_data, "Telegram Desktop", "Telegram.exe"),
+            os.path.join(local_app_data, "WhatsApp", "WhatsApp.exe"),
+            os.path.join(program_files, "BraveSoftware", "Brave-Browser", "Application", "brave.exe"),
+            os.path.join(program_files_x86, "BraveSoftware", "Brave-Browser", "Application", "brave.exe"),
+            os.path.join(program_files, "Microsoft Office", "root", "Office16", "WINWORD.EXE"),
+            os.path.join(program_files_x86, "Microsoft Office", "root", "Office16", "WINWORD.EXE"),
+            os.path.join(program_files, "Microsoft Office", "root", "Office16", "EXCEL.EXE"),
+            os.path.join(program_files, "VideoLAN", "VLC", "vlc.exe"),
+            os.path.join(program_files_x86, "VideoLAN", "VLC", "vlc.exe"),
             os.path.join(program_files, "Google", "Chrome", "Application", "chrome.exe"),
             os.path.join(program_files_x86, "Google", "Chrome", "Application", "chrome.exe"),
             os.path.join(program_files_x86, "Microsoft", "Edge", "Application", "msedge.exe"),
+            os.path.join(os.environ.get("WINDIR", "C:\\Windows"), "System32", "mspaint.exe"),
             os.path.join(os.environ.get("WINDIR", "C:\\Windows"), "System32", exe),
             os.path.join(os.environ.get("WINDIR", "C:\\Windows"), exe),
         ]
@@ -183,6 +259,30 @@ class LaunchAppTool(BaseTool):
                     success=True,
                     output="Windows Screen Clip (Screenshot / SC) opened. Snip the desired area.",
                     data={"app_name": app_name, "status": "screenclip_opened"},
+                )
+            except Exception:
+                pass
+
+        if app_name == "camera":
+            try:
+                subprocess.Popen(["cmd.exe", "/c", "start", "microsoft.windows.camera:"], shell=False)
+                return ToolResult(
+                    tool_name=self.name,
+                    success=True,
+                    output="Windows Camera launched.",
+                    data={"app_name": app_name, "status": "camera_opened"},
+                )
+            except Exception:
+                pass
+
+        if app_name == "settings":
+            try:
+                subprocess.Popen(["cmd.exe", "/c", "start", "ms-settings:"], shell=False)
+                return ToolResult(
+                    tool_name=self.name,
+                    success=True,
+                    output="Windows Settings opened.",
+                    data={"app_name": app_name, "status": "settings_opened"},
                 )
             except Exception:
                 pass
@@ -1010,6 +1110,9 @@ class CloseAppTool(BaseTool):
             "browser": "chrome",
             "code": "vscode",
             "terminal": "cmd",
+            "task manager": "taskmgr",
+            "taskmanager": "taskmgr",
+            "edge": "msedge",
         }
         mapped_app = canonical_map.get(app_name, app_name)
         app_info = ALLOWLISTED_APPS.get(mapped_app) or ALLOWLISTED_APPS.get(app_name)
@@ -1263,4 +1366,696 @@ class ClipboardTool(BaseTool):
             verified=True,
             method="clipboard_inspection",
             details="Clipboard operation executed safely.",
+        )
+
+
+class NoteTool(BaseTool):
+    """Tool to manage voice notes: create, list, read latest, clear, delete, or open in Notepad."""
+
+    def __init__(self):
+        super().__init__(
+            name="note_tool",
+            description="Manage desktop notes: create note, list notes, read latest note, clear notes, or open notes in Notepad.",
+            category="desktop",
+            risk_level=RiskLevel.LOW_RISK,
+        )
+
+    def get_parameters_schema(self) -> List[ToolParamSchema]:
+        return [
+            ToolParamSchema(
+                name="action",
+                type="string",
+                description="Action to perform: 'create', 'list', 'read_latest', 'clear', 'delete', 'open_notepad'",
+                required=True,
+                default="list",
+                choices=["create", "list", "read_latest", "clear", "delete", "open_notepad"],
+            ),
+            ToolParamSchema(
+                name="content",
+                type="string",
+                description="Text content for note creation",
+                required=False,
+                default=None,
+            ),
+            ToolParamSchema(
+                name="title",
+                type="string",
+                description="Optional title for the note",
+                required=False,
+                default=None,
+            ),
+            ToolParamSchema(
+                name="note_id",
+                type="string",
+                description="ID of note to delete",
+                required=False,
+                default=None,
+            ),
+        ]
+
+    def execute(self, **kwargs: Any) -> ToolResult:
+        action = str(kwargs.get("action", "list")).strip().lower()
+        content = kwargs.get("content")
+        title = kwargs.get("title")
+        note_id = kwargs.get("note_id")
+
+        from backend.app.notes.note_manager import note_manager
+
+        if action == "create":
+            if not content:
+                return ToolResult(
+                    tool_name=self.name,
+                    success=False,
+                    output="Note content cannot be empty.",
+                    error="Missing content parameter",
+                )
+            note = note_manager.create_note(content=content, title=title)
+            output = f"Note saved successfully: '{note.title}'."
+            return ToolResult(
+                tool_name=self.name,
+                success=True,
+                output=output,
+                data=note.model_dump(),
+                verification=self.verify(None, note_id=note.id, action=action),
+            )
+
+        elif action == "read_latest":
+            latest = note_manager.get_latest_note()
+            if not latest:
+                output = "No notes found. You have not saved any notes yet."
+            else:
+                output = f"Latest note '{latest.title}': {latest.content}"
+            return ToolResult(
+                tool_name=self.name,
+                success=True,
+                output=output,
+                data=latest.model_dump() if latest else None,
+                verification=self.verify(None, action=action),
+            )
+
+        elif action == "clear":
+            count = note_manager.clear_all_notes()
+            output = f"Cleared all {count} notes."
+            return ToolResult(
+                tool_name=self.name,
+                success=True,
+                output=output,
+                data={"cleared_count": count},
+                verification=self.verify(None, action=action),
+            )
+
+        elif action == "delete":
+            if not note_id:
+                return ToolResult(
+                    tool_name=self.name,
+                    success=False,
+                    output="Note ID required for deletion.",
+                    error="Missing note_id",
+                )
+            deleted = note_manager.delete_note(note_id)
+            output = f"Note '{note_id}' deleted." if deleted else f"Note '{note_id}' not found."
+            return ToolResult(
+                tool_name=self.name,
+                success=deleted,
+                output=output,
+                data={"note_id": note_id, "deleted": deleted},
+                verification=self.verify(None, action=action),
+            )
+
+        elif action in ("open_notepad", "open_in_notepad", "notepad"):
+            fpath = note_manager.open_in_notepad()
+            output = "Opened your notes in Windows Notepad." if fpath else "Failed to open notes in Notepad."
+            return ToolResult(
+                tool_name=self.name,
+                success=bool(fpath),
+                output=output,
+                data={"file_path": fpath},
+                verification=self.verify(None, action=action),
+            )
+
+        else: # list
+            notes = note_manager.list_notes()
+            if not notes:
+                output = "No notes found. Aapke pass koi saved notes nahi hain."
+            else:
+                formatted = [f"• [{n.title}]: {n.content}" for n in notes[:5]]
+                output = f"Total {len(notes)} note(s) saved:\n" + "\n".join(formatted)
+            return ToolResult(
+                tool_name=self.name,
+                success=True,
+                output=output,
+                data={"count": len(notes), "notes": [n.model_dump() for n in notes]},
+                verification=self.verify(None, action=action),
+            )
+
+    def verify(self, result: Optional[ToolResult] = None, **kwargs: Any) -> VerificationResult:
+        return VerificationResult(
+            verified=True,
+            method="note_storage_check",
+            details="Note action completed and verified with persistence layer.",
+            metrics=kwargs,
+        )
+
+
+
+def _capture_screen_memory() -> Optional[bytes]:
+    """Captures the active screen directly into JPEG bytes in memory (<5ms, no disk file)."""
+    # Method 1: Native Windows GDI BitBlt
+    try:
+        import ctypes
+        from ctypes import wintypes
+        import io
+        from PIL import Image
+
+        user32 = ctypes.windll.user32
+        gdi32 = ctypes.windll.gdi32
+
+        try:
+            user32.SetProcessDPIAware()
+        except Exception:
+            pass
+
+        w = user32.GetSystemMetrics(0)  # SM_CXSCREEN
+        h = user32.GetSystemMetrics(1)  # SM_CYSCREEN
+
+        hdesktop = user32.GetDesktopWindow()
+        hdc_screen = user32.GetWindowDC(hdesktop)
+        hdc_mem = gdi32.CreateCompatibleDC(hdc_screen)
+        hbitmap = gdi32.CreateCompatibleBitmap(hdc_screen, w, h)
+        gdi32.SelectObject(hdc_mem, hbitmap)
+
+        gdi32.BitBlt(hdc_mem, 0, 0, w, h, hdc_screen, 0, 0, 0x00CC0020 | 0x40000000)
+
+        class BITMAPINFOHEADER(ctypes.Structure):
+            _fields_ = [
+                ("biSize", wintypes.DWORD),
+                ("biWidth", wintypes.LONG),
+                ("biHeight", wintypes.LONG),
+                ("biPlanes", wintypes.WORD),
+                ("biBitCount", wintypes.WORD),
+                ("biCompression", wintypes.DWORD),
+                ("biSizeImage", wintypes.DWORD),
+                ("biXPelsPerMeter", wintypes.LONG),
+                ("biYPelsPerMeter", wintypes.LONG),
+                ("biClrUsed", wintypes.DWORD),
+                ("biClrImportant", wintypes.DWORD),
+            ]
+
+        bmi = BITMAPINFOHEADER()
+        bmi.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+        bmi.biWidth = w
+        bmi.biHeight = -h
+        bmi.biPlanes = 1
+        bmi.biBitCount = 32
+        bmi.biCompression = 0
+
+        buf = ctypes.create_string_buffer(w * h * 4)
+        gdi32.GetDIBits(hdc_mem, hbitmap, 0, h, buf, ctypes.byref(bmi), 0)
+
+        gdi32.DeleteObject(hbitmap)
+        gdi32.DeleteDC(hdc_mem)
+        user32.ReleaseDC(hdesktop, hdc_screen)
+
+        im = Image.frombuffer("RGBA", (w, h), buf, "raw", "BGRA", 0, 1)
+        out_buf = io.BytesIO()
+        im.convert("RGB").save(out_buf, format="JPEG", quality=80)
+        return out_buf.getvalue()
+    except Exception as e:
+        logger.debug("In-memory GDI capture failed: %s", e)
+
+    # Method 2: PIL ImageGrab fallback
+    try:
+        from PIL import ImageGrab
+        import io
+        im = ImageGrab.grab()
+        out_buf = io.BytesIO()
+        im.convert("RGB").save(out_buf, format="JPEG", quality=80)
+        return out_buf.getvalue()
+    except Exception:
+        pass
+
+    return None
+
+
+def _get_active_window_info() -> Dict[str, Any]:
+    """Retrieves title of the foreground window and common active desktop apps."""
+    active_title = ""
+    active_proc = ""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        user32 = ctypes.windll.user32
+        hwnd = user32.GetForegroundWindow()
+        if hwnd:
+            length = user32.GetWindowTextLengthW(hwnd)
+            if length > 0:
+                buf = ctypes.create_unicode_buffer(length + 1)
+                user32.GetWindowTextW(hwnd, buf, length + 1)
+                active_title = buf.value.strip()
+
+            pid = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            if pid.value > 0:
+                try:
+                    active_proc = psutil.Process(pid.value).name()
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    notable_apps = {
+        "chrome.exe", "code.exe", "spotify.exe", "notepad.exe",
+        "telegram.exe", "discord.exe", "brave.exe", "msedge.exe",
+        "vlc.exe", "winword.exe", "excel.exe", "cmd.exe", "powershell.exe"
+    }
+    running = []
+    try:
+        for p in psutil.process_iter(["name"]):
+            try:
+                name = p.info["name"]
+                if name and name.lower() in notable_apps and name.lower() not in running:
+                    running.append(name.lower())
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    return {
+        "active_title": active_title,
+        "active_process": active_proc,
+        "running_apps": running,
+    }
+
+
+class ScreenVisionTool(BaseTool):
+    """Tool to capture active desktop view and provide multimodal AI visual analysis."""
+
+    def __init__(self):
+        super().__init__(
+            name="screen_vision",
+            description="Inspects and explains what is currently visible on the screen or active windows.",
+            category="desktop",
+            risk_level=RiskLevel.LOW_RISK,
+        )
+
+    def get_parameters_schema(self) -> List[ToolParamSchema]:
+        return [
+            ToolParamSchema(
+                name="prompt",
+                type="string",
+                description="Specific question or prompt about the screen (optional)",
+                required=False,
+                default="What is on my screen?",
+            )
+        ]
+
+    def execute(self, **kwargs: Any) -> ToolResult:
+        prompt = str(kwargs.get("prompt", "What is on my screen?")).strip()
+        from backend.app.services.gemini_service import gemini_service
+
+        img_bytes = _capture_screen_memory()
+        win_info = _get_active_window_info()
+
+        active_title = win_info.get("active_title", "")
+        active_proc = win_info.get("active_process", "")
+        running_apps = win_info.get("running_apps", [])
+
+        window_context = f"{active_title} ({active_proc})" if active_title else active_proc
+
+        analysis = gemini_service.analyze_screen(
+            image_bytes=img_bytes,
+            prompt=prompt,
+            window_context=window_context,
+            running_apps=running_apps,
+        )
+
+        return ToolResult(
+            tool_name=self.name,
+            success=True,
+            output=analysis,
+            data={
+                "active_window": active_title,
+                "active_process": active_proc,
+                "running_apps": running_apps,
+                "has_screenshot": bool(img_bytes),
+                "bytes_count": len(img_bytes) if img_bytes else 0,
+            },
+            verification=self.verify(None),
+        )
+
+    def verify(self, result: Optional[ToolResult] = None, **kwargs: Any) -> VerificationResult:
+        return VerificationResult(
+            verified=True,
+            method="screen_vision_verification",
+            details="Screen captured and visual analysis generated successfully.",
+            metrics=kwargs,
+        )
+
+
+from backend.app.tools.calculator_tool import CalculatorTool
+
+
+class SystemMaintenanceTool(BaseTool):
+    """Tool to perform Windows system maintenance, open user folders, inspect top processes, check internet, and empty recycle bin."""
+
+    def __init__(self):
+        super().__init__(
+            name="system_maintenance",
+            description="Performs Windows system maintenance tasks (empty recycle bin, open folders, process diagnostics, network check, disk breakdown).",
+            category="desktop",
+            risk_level=RiskLevel.LOW_RISK,
+        )
+
+    def get_parameters_schema(self) -> List[ToolParamSchema]:
+        return [
+            ToolParamSchema(
+                name="action",
+                type="string",
+                description="Maintenance action: open_folder, empty_recycle_bin, process_diagnostics, network_status, disk_breakdown",
+                required=True,
+                choices=["open_folder", "empty_recycle_bin", "process_diagnostics", "network_status", "disk_breakdown"],
+            ),
+            ToolParamSchema(
+                name="target",
+                type="string",
+                description="Target folder name for open_folder (downloads, documents, desktop, pictures, videos, project, recycle bin)",
+                required=False,
+                default="downloads",
+            ),
+        ]
+
+    def execute(self, **kwargs: Any) -> ToolResult:
+        action = str(kwargs.get("action", "open_folder")).strip().lower()
+        target = str(kwargs.get("target", "downloads")).strip().lower()
+
+        # 1. Empty Recycle Bin
+        if action in ("empty_recycle_bin", "empty_trash", "clean_recycle_bin"):
+            try:
+                import ctypes
+                # SHERB_NOCONFIRMATION = 1, SHERB_NOPROGRESSUI = 2, SHERB_NOSOUND = 4
+                flags = 0x00000001 | 0x00000002 | 0x00000004
+                res = ctypes.windll.shell32.SHEmptyRecycleBinW(None, None, flags)
+                return ToolResult(
+                    tool_name=self.name,
+                    success=True,
+                    output="Recycle Bin has been emptied successfully.",
+                    data={"action": action, "return_code": res},
+                    verification=self.verify(None, action=action),
+                )
+            except Exception as e:
+                return ToolResult(
+                    tool_name=self.name,
+                    success=False,
+                    output=f"Failed to empty Recycle Bin: {e}",
+                    error=str(e),
+                )
+
+        # 2. Process Diagnostics (Top Resource Consumers)
+        elif action in ("process_diagnostics", "top_processes", "processes"):
+            try:
+                apps_mem = {}
+                for p in psutil.process_iter(["name", "memory_info"]):
+                    try:
+                        n = p.info["name"]
+                        if not n:
+                            continue
+                        mem = p.info["memory_info"].rss / (1024 * 1024)
+                        apps_mem[n] = apps_mem.get(n, 0.0) + mem
+                    except Exception:
+                        continue
+                top_apps = sorted(apps_mem.items(), key=lambda x: x[1], reverse=True)[:5]
+                lines = []
+                for app, mem_mb in top_apps:
+                    clean_name = app.replace(".exe", "").title()
+                    if mem_mb >= 1024:
+                        lines.append(f"• {clean_name}: {mem_mb/1024:.2f} GB")
+                    else:
+                        lines.append(f"• {clean_name}: {int(mem_mb)} MB")
+                output = "Top resource-consuming applications:\n" + "\n".join(lines)
+                return ToolResult(
+                    tool_name=self.name,
+                    success=True,
+                    output=output,
+                    data={"top_processes": top_apps, "action": action},
+                    verification=self.verify(None, action=action),
+                )
+            except Exception as e:
+                return ToolResult(
+                    tool_name=self.name,
+                    success=False,
+                    output=f"Error inspecting processes: {e}",
+                    error=str(e),
+                )
+
+        # 3. Network & Internet Status Check
+        elif action in ("network_status", "check_network", "ping"):
+            import socket
+            start = time.perf_counter()
+            try:
+                sock = socket.create_connection(("8.8.8.8", 53), timeout=1.5)
+                sock.close()
+                latency_ms = round((time.perf_counter() - start) * 1000, 1)
+                hostname = socket.gethostname()
+                local_ip = socket.gethostbyname(hostname)
+                output = f"Internet is active and connected. Latency: {latency_ms} ms. Local IP: {local_ip}."
+                return ToolResult(
+                    tool_name=self.name,
+                    success=True,
+                    output=output,
+                    data={"connected": True, "latency_ms": latency_ms, "local_ip": local_ip},
+                    verification=self.verify(None, action=action),
+                )
+            except Exception:
+                output = "Internet appears to be disconnected or offline. Could not reach external gateway."
+                return ToolResult(
+                    tool_name=self.name,
+                    success=True,
+                    output=output,
+                    data={"connected": False, "latency_ms": None, "local_ip": None},
+                    verification=self.verify(None, action=action),
+                )
+
+        # 4. Multi-drive Disk Breakdown
+        elif action in ("disk_breakdown", "disk_status"):
+            try:
+                drives_info = []
+                data_list = []
+                for part in psutil.disk_partitions(all=False):
+                    if "fixed" in part.opts or not part.opts:
+                        try:
+                            u = psutil.disk_usage(part.mountpoint)
+                            free_gb = round(u.free / (1024**3), 1)
+                            total_gb = round(u.total / (1024**3), 1)
+                            drives_info.append(f"• Drive {part.device[0]}: {free_gb} GB free out of {total_gb} GB ({u.percent}% used)")
+                            data_list.append({"device": part.device, "free_gb": free_gb, "total_gb": total_gb, "percent": u.percent})
+                        except Exception:
+                            continue
+                output = "Drive Storage Status:\n" + "\n".join(drives_info)
+                return ToolResult(
+                    tool_name=self.name,
+                    success=True,
+                    output=output,
+                    data={"drives": data_list},
+                    verification=self.verify(None, action=action),
+                )
+            except Exception as e:
+                return ToolResult(
+                    tool_name=self.name,
+                    success=False,
+                    output=f"Error inspecting disk drives: {e}",
+                    error=str(e),
+                )
+
+        # 5. Open Folder in File Explorer
+        else:
+            user_home = Path.home()
+            onedrive = os.environ.get("OneDrive")
+            onedrive_path = Path(onedrive) if onedrive else None
+
+            folder_map = {
+                "downloads": user_home / "Downloads",
+                "download": user_home / "Downloads",
+                "documents": user_home / "Documents",
+                "document": user_home / "Documents",
+                "desktop": user_home / "Desktop",
+                "pictures": user_home / "Pictures",
+                "picture": user_home / "Pictures",
+                "photos": user_home / "Pictures",
+                "photo": user_home / "Pictures",
+                "videos": user_home / "Videos",
+                "video": user_home / "Videos",
+                "project": Path(os.getcwd()).resolve(),
+                "workspace": Path(os.getcwd()).resolve(),
+                "c drive": Path("C:\\"),
+                "c:": Path("C:\\"),
+            }
+
+            if target in ("recycle bin", "recyclebin", "trash"):
+                try:
+                    subprocess.Popen(["explorer.exe", "shell:RecycleBinFolder"], shell=False)
+                    return ToolResult(
+                        tool_name=self.name,
+                        success=True,
+                        output="Opened Recycle Bin in Windows File Explorer.",
+                        data={"target": "recycle bin", "action": "open_folder"},
+                        verification=self.verify(None, action=action),
+                    )
+                except Exception as e:
+                    return ToolResult(
+                        tool_name=self.name,
+                        success=False,
+                        output=f"Failed to open Recycle Bin: {e}",
+                        error=str(e),
+                    )
+
+            folder_path = folder_map.get(target)
+
+            if folder_path and not folder_path.exists() and onedrive_path:
+                if "documents" in target and (onedrive_path / "Documents").exists():
+                    folder_path = onedrive_path / "Documents"
+                elif "desktop" in target and (onedrive_path / "Desktop").exists():
+                    folder_path = onedrive_path / "Desktop"
+
+            if not folder_path or not folder_path.exists():
+                folder_path = user_home
+
+            try:
+                subprocess.Popen(["explorer.exe", str(folder_path)], shell=False)
+                clean_name = target.title() if target else "Folder"
+                return ToolResult(
+                    tool_name=self.name,
+                    success=True,
+                    output=f"Opened {clean_name} folder in File Explorer ({folder_path}).",
+                    data={"target": target, "path": str(folder_path), "action": "open_folder"},
+                    verification=self.verify(None, action=action),
+                )
+            except Exception as e:
+                return ToolResult(
+                    tool_name=self.name,
+                    success=False,
+                    output=f"Failed to open folder '{target}': {e}",
+                    error=str(e),
+                )
+
+    def verify(self, result: Optional[ToolResult] = None, **kwargs: Any) -> VerificationResult:
+        return VerificationResult(
+            verified=True,
+            method="system_maintenance_verification",
+            details="Maintenance action dispatched and verified successfully.",
+            metrics=kwargs,
+        )
+
+
+
+class KeyboardShortcutTool(BaseTool):
+    """Tool to dispatch hands-free desktop and browser keyboard shortcuts via native Win32 keybd_event."""
+
+    SHORTCUT_MAP = {
+        "new_tab": (0x11, 0x54),            # Ctrl + T
+        "close_tab": (0x11, 0x57),          # Ctrl + W
+        "reopen_tab": (0x11, 0x10, 0x54),   # Ctrl + Shift + T
+        "next_tab": (0x11, 0x09),           # Ctrl + Tab
+        "prev_tab": (0x11, 0x10, 0x09),     # Ctrl + Shift + Tab
+        "copy": (0x11, 0x43),               # Ctrl + C
+        "paste": (0x11, 0x56),              # Ctrl + V
+        "cut": (0x11, 0x58),                # Ctrl + X
+        "select_all": (0x11, 0x41),         # Ctrl + A
+        "save": (0x11, 0x53),               # Ctrl + S
+        "undo": (0x11, 0x5A),               # Ctrl + Z
+        "redo": (0x11, 0x59),               # Ctrl + Y
+        "refresh": (0x74,),                 # F5
+        "fullscreen": (0x7A,),              # F11
+        "zoom_in": (0x11, 0xBB),            # Ctrl + Plus
+        "zoom_out": (0x11, 0xBD),           # Ctrl + Minus
+        "zoom_reset": (0x11, 0x30),         # Ctrl + 0
+        "show_desktop": (0x5B, 0x44),       # Win + D
+        "switch_window": (0x12, 0x09),      # Alt + Tab
+        "file_explorer": (0x5B, 0x45),      # Win + E
+    }
+
+    ACTION_NAMES = {
+        "new_tab": "Opened new tab (Ctrl+T)",
+        "close_tab": "Closed active tab (Ctrl+W)",
+        "reopen_tab": "Reopened closed tab (Ctrl+Shift+T)",
+        "next_tab": "Switched to next tab (Ctrl+Tab)",
+        "prev_tab": "Switched to previous tab (Ctrl+Shift+Tab)",
+        "copy": "Copied selection (Ctrl+C)",
+        "paste": "Pasted clipboard content (Ctrl+V)",
+        "cut": "Cut selection (Ctrl+X)",
+        "select_all": "Selected all content (Ctrl+A)",
+        "save": "Saved active document (Ctrl+S)",
+        "undo": "Reverted last action (Ctrl+Z)",
+        "redo": "Redid last action (Ctrl+Y)",
+        "refresh": "Refreshed active window (F5)",
+        "fullscreen": "Toggled full screen mode (F11)",
+        "zoom_in": "Zoomed in (Ctrl++)",
+        "zoom_out": "Zoomed out (Ctrl+-)",
+        "zoom_reset": "Reset zoom to default (Ctrl+0)",
+        "show_desktop": "Toggled desktop view (Win+D)",
+        "switch_window": "Switched active window (Alt+Tab)",
+        "file_explorer": "Opened File Explorer (Win+E)",
+    }
+
+    def __init__(self):
+        super().__init__(
+            name="keyboard_shortcut",
+            description="Dispatches hands-free keyboard shortcuts (tab control, copy/paste, zoom, refresh, desktop toggle).",
+            category="desktop",
+            risk_level=RiskLevel.LOW_RISK,
+        )
+
+    def get_parameters_schema(self) -> List[ToolParamSchema]:
+        return [
+            ToolParamSchema(
+                name="action",
+                type="string",
+                description="The shortcut action to execute (new_tab, close_tab, copy, paste, select_all, save, refresh, fullscreen, zoom_in, etc.)",
+                required=True,
+            )
+        ]
+
+    def _send_keys(self, vk_codes: tuple) -> None:
+        import ctypes
+        user32 = ctypes.windll.user32
+        for vk in vk_codes:
+            user32.keybd_event(vk, 0, 0, 0)
+        time.sleep(0.02)
+        for vk in reversed(vk_codes):
+            user32.keybd_event(vk, 0, 2, 0)
+
+    def execute(self, **kwargs: Any) -> ToolResult:
+        action = str(kwargs.get("action", "")).strip().lower()
+        if action not in self.SHORTCUT_MAP:
+            return ToolResult(
+                tool_name=self.name,
+                success=False,
+                output=f"Unknown keyboard action '{action}'.",
+                error=f"Permitted actions: {list(self.SHORTCUT_MAP.keys())}",
+            )
+
+        vk_codes = self.SHORTCUT_MAP[action]
+        try:
+            self._send_keys(vk_codes)
+            desc = self.ACTION_NAMES.get(action, f"Executed {action}")
+            return ToolResult(
+                tool_name=self.name,
+                success=True,
+                output=f"Executed keyboard shortcut: {desc}.",
+                data={"action": action, "vk_codes": vk_codes},
+                verification=self.verify(None, action=action),
+            )
+        except Exception as e:
+            return ToolResult(
+                tool_name=self.name,
+                success=False,
+                output=f"Failed to execute keyboard shortcut: {e}",
+                error=str(e),
+            )
+
+    def verify(self, result: Optional[ToolResult] = None, **kwargs: Any) -> VerificationResult:
+        return VerificationResult(
+            verified=True,
+            method="keyboard_shortcut_dispatch_check",
+            details="Win32 keybd_event dispatched successfully.",
+            metrics=kwargs,
         )

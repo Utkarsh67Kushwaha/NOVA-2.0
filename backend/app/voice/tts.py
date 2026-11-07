@@ -126,5 +126,5 @@ class TextToSpeechService:
 
 
 # Singleton instance
-tts_service = TextToSpeechService(rate=190, volume=1.0)
+tts_service = TextToSpeechService(rate=165, volume=1.0)
 

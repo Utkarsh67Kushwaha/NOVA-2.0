@@ -22,13 +22,15 @@ SYSTEM_INSTRUCTION = (
     "Never use markdown tables, asterisks for formatting, or excessive lists. Be warm, accurate, and helpful."
 )
 
-DEFAULT_MODEL = "gemini-2.5-flash"
-FALLBACK_MODEL = "gemini-1.5-flash"
+DEFAULT_MODEL = "gemini-3.8-flash"
+FALLBACK_MODEL = "gemini-3.5-flash-lite"
+AVAILABLE_MODELS = ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-4-argon"]
 
 
 class GeminiService:
     def __init__(self):
         self.api_key: Optional[str] = self._load_api_key()
+        self.model: str = os.environ.get("GEMINI_MODEL", DEFAULT_MODEL)
         self.chat_history: List[Dict[str, Any]] = []
         self._max_history = 10
 
@@ -75,6 +77,15 @@ class GeminiService:
             logger.error("Failed to persist GEMINI_API_KEY: %s", e)
             return False
 
+    def set_model(self, model_name: str) -> bool:
+        """Sets the active Gemini model."""
+        clean_model = model_name.strip().lower()
+        if clean_model in AVAILABLE_MODELS or clean_model.startswith("gemini-"):
+            self.model = clean_model
+            logger.info("Updated active Gemini model to '%s'", self.model)
+            return True
+        return False
+
     def is_configured(self) -> bool:
         """Returns True if a valid Gemini API key is configured."""
         return bool(self.api_key and len(self.api_key) > 10)
@@ -94,9 +105,108 @@ class GeminiService:
         # Otherwise, use rich offline conversational intelligence
         return self._offline_conversational_brain(cleaned)
 
+    def analyze_screen(
+        self,
+        image_bytes: Optional[bytes] = None,
+        prompt: Optional[str] = None,
+        window_context: Optional[str] = None,
+        running_apps: Optional[List[str]] = None,
+    ) -> str:
+        """Analyzes a screen capture via Gemini multimodal vision API, falling back to offline context intelligence."""
+        p = prompt.strip() if prompt else "Aapke screen par kya dikh raha hai, describe karein."
+
+        # 1. If configured and image provided, call multimodal Gemini
+        if self.is_configured() and image_bytes and len(image_bytes) > 500:
+            res = self._ask_gemini_multimodal(image_bytes, p, window_context)
+            if res:
+                return res
+
+        # 2. Rich offline screen intelligence
+        return self._offline_screen_brain(window_context, running_apps, p)
+
+    def _ask_gemini_multimodal(
+        self, image_bytes: bytes, prompt: str, window_context: Optional[str]
+    ) -> Optional[str]:
+        """Sends multimodal image payload to Gemini 2.5 Flash."""
+        import base64
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
+        b64_image = base64.b64encode(image_bytes).decode("ascii")
+
+        system_instruction_text = (
+            "You are NOVA, an ultra-fast desktop AI assistant. The user is asking about their screen. "
+            "Analyze the image and active window context. Give a concise, conversational 1-3 sentence summary "
+            "in the user's language (Hindi, Hinglish, or English). Do not use markdown asterisks or bullet points."
+        )
+
+        user_content = prompt
+        if window_context:
+            user_content += f" (Active Window Context: {window_context})"
+
+        payload = {
+            "system_instruction": {"parts": [{"text": system_instruction_text}]},
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [
+                        {"text": user_content},
+                        {
+                            "inline_data": {
+                                "mime_type": "image/jpeg",
+                                "data": b64_image,
+                            }
+                        },
+                    ],
+                }
+            ],
+            "generationConfig": {
+                "temperature": 0.4,
+                "maxOutputTokens": 250,
+            },
+        }
+
+        try:
+            with httpx.Client(timeout=8.0) as client:
+                resp = client.post(url, json=payload)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    candidates = data.get("candidates", [])
+                    if candidates:
+                        parts = candidates[0].get("content", {}).get("parts", [])
+                        if parts:
+                            text = parts[0].get("text", "").strip()
+                            text = re.sub(r"[*_#`]+", "", text)
+                            return text
+                else:
+                    logger.warning("Gemini Multimodal API returned status %d: %s", resp.status_code, resp.text[:200])
+        except Exception as e:
+            logger.error("Gemini Multimodal Vision API call failed: %s", e)
+
+        return None
+
+    def _offline_screen_brain(
+        self,
+        window_context: Optional[str] = None,
+        running_apps: Optional[List[str]] = None,
+        prompt: Optional[str] = None,
+    ) -> str:
+        """Context intelligence when offline or Gemini API key is not configured."""
+        win = (window_context or "").strip()
+        apps = [a.replace(".exe", "").title() for a in (running_apps or [])]
+
+        if win and apps:
+            app_str = ", ".join(apps[:3])
+            return f"Aapke screen par abhi '{win}' active hai, aur background me {app_str} chal rahe hain. Full visual AI analysis ke liye Settings me Gemini API key add karein."
+        elif win:
+            return f"Aapke screen par abhi '{win}' window active hai. Detailed AI visual analysis ke liye Settings me Gemini API key connect karein."
+        elif apps:
+            app_str = ", ".join(apps[:4])
+            return f"Desktop par abhi {app_str} active hain. Screen ka visual analysis lene ke liye Settings me Gemini API key add karein."
+        else:
+            return "Screen par aapka desktop active hai. Detailed visual understanding ke liye NOVA Dashboard Settings me apna free Gemini API key connect karein."
+
     def _ask_gemini(self, query: str) -> Optional[str]:
         """Calls Google Gemini REST API (synchronous — runs in thread pool via routes layer)."""
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{DEFAULT_MODEL}:generateContent?key={self.api_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
 
         # Build contents with recent context (last 6 turns)
         messages = list(self.chat_history[-6:])

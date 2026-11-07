@@ -35,14 +35,17 @@ NOVA 2.0/
 │   │   │   ├── vad.py            # Energy + WebRTC VAD (silence_timeout_sec = 0.45s)
 │   │   │   ├── stt.py            # Faster-Whisper base (beam_size=1, cpu_threads=6, greedy)
 │   │   │   ├── tts.py            # Non-blocking pyttsx3 persistent COM worker + interrupt event
-│   │   │   ├── wake_word.py      # Regex wake-word stripper ("hey nova", "nova", "suno")
+│   │   │   ├── wake_word.py      # Regex wake-word stripper ("hey nova", "bhai nova", "suno")
 │   │   │   └── voice_manager.py  # Audio pipeline orchestrator (VAD -> STT -> Dispatcher -> TTS)
-│   │   └── reminders/
-│   │       ├── time_parser.py    # Natural language time parsing ("in 10 minutes", "at 5pm")
-│   │       └── scheduler.py      # Background reminder scheduler + Windows notifications
-│   ├── data/                     # ML training data & persistent reminders.json
+│   │   ├── reminders/
+│   │   │   ├── time_parser.py    # Natural language time parsing ("in 10 minutes", "at 5pm")
+│   │   │   └── scheduler.py      # Background reminder scheduler + Windows notifications
+│   │   └── notes/
+│   │       ├── note_model.py     # Persistent NoteItem & NoteCreate schemas
+│   │       └── note_manager.py   # Thread-safe persistent JSON notes & Notepad exporter
+│   ├── data/                     # ML training data, persistent reminders.json & notes.json
 │   ├── models/                   # Serialized intent_classifier.pkl & evaluation report
-│   └── tests/                    # 85 pytest tests (100% passing)
+│   └── tests/                    # 204 pytest tests (100% passing)
 ├── frontend/
 │   ├── electron/main.ts          # Electron window manager, IPC handlers, dev server watcher
 │   ├── src/
@@ -65,7 +68,7 @@ Run all commands from repository root: `c:\Users\utkar\OneDrive\Desktop\NOVA 2.0
 | **Run Full Desktop App** | `powershell -ExecutionPolicy Bypass -File .\scripts\start_desktop.ps1` |
 | **Run Backend Only** | `.\.venv\Scripts\python.exe -m backend.app.main` *(port 8000)* |
 | **Run Frontend Web Only** | `npm --prefix frontend run dev:renderer` *(browser on :5173)* |
-| **Run Pytest Suite** | `.\.venv\Scripts\python.exe -m pytest backend/tests` *(85 tests)* |
+| **Run Pytest Suite** | `.\.venv\Scripts\python.exe -m pytest backend/tests` *(245 tests)* |
 | **Build Frontend** | `npm --prefix frontend run build` |
 | **Free Port 8000** | `Get-NetTCPConnection -LocalPort 8000 -EA 0 \| % { Stop-Process -Id $_.OwningProcess -Force }` |
 
@@ -76,19 +79,26 @@ The intent engine in `backend/app/services/intent_service.py` operates in priori
 1. **Rule 0 (Direct Single-Word Apps)**: `"calc"`, `"notepad"`, `"chrome"`, `"spotify"`, `"vscode"`, `"code"`, `"terminal"`, `"camera"`, `"paint"`, `"settings"` $\rightarrow$ `OPEN_APP`.
 2. **Rule 0.1 (Direct Mute/Unmute)**: `"mute"`, `"unmute"` $\rightarrow$ `SYSTEM_CONTROL`.
 3. **Rule 0.2 (System Diagnostics & Info)**: `"battery"`, `"time"`, `"date"`, `"weather"` $\rightarrow$ `SYSTEM_INFO` / `AI_CHAT`.
-4. **Rule 0.5 (Apps with Verbs)**: `"{verb} {app}"` / `"{app} {verb}"` $\rightarrow$ `OPEN_APP`.
+4. **Rule 0.25 (Voice Math & Instant Calculator)**: `"calculate 20% of 1500"`, `"500 divided by 12"`, `"15 into 40"`, `"18% GST on 5000"` $\rightarrow$ `CALCULATE` (safe AST evaluation).
+5. **Rule 0.26 (Live Multimodal Screen Vision)**: `"what's on my screen"`, `"screen par kya hai"`, `"look at my screen"`, `"screen dekh kar batao"`, `"explain active window"` $\rightarrow$ `SCREEN_VISION` (multimodal Gemini 2.5 Flash + offline Win32 fallback).
+6. **Rule 0.27 (Windows System Maintenance & Quick Folders)**: `"empty recycle bin"`, `"recycle bin saaf karo"`, `"downloads folder kholo"`, `"open documents"`, `"top processes batao"`, `"internet check karo"`, `"all drives status"` $\rightarrow$ `SYSTEM_MAINTENANCE` (empty recycle bin via Win32 `SHEmptyRecycleBinW`, folder explorer launcher, socket ping, process RSS diagnostics).
+7. **Rule 0.28 (Hands-Free Voice Keyboard & Desktop Shortcuts)**: `"new tab kholo"`, `"close tab"`, `"copy karo"`, `"paste karo"`, `"select all"`, `"save karo"`, `"undo karo"`, `"refresh karo"`, `"full screen"`, `"zoom in/out"`, `"show desktop"`, `"switch window"` $\rightarrow$ `KEYBOARD_ACTION` (native Win32 `keybd_event` hotkey dispatch).
+8. **Rule 0.29 (Deep Multi-Engine Search)**: `"search youtube for <q>"`, `"search github for <q>"`, `"search wikipedia for <q>"`, `"search amazon for <q>"`, `"search stackoverflow for <q>"` $\rightarrow$ `BROWSER_ACTION` (targeted engine URL dispatch).
+9. **Rule 0.5 (Apps with Verbs)**: `"{verb} {app}"` / `"{app} {verb}"` $\rightarrow$ `OPEN_APP`.
 5. **Rule 0.51 (App Close/Kill)**: `"close {app}"`, `"{app} band karo"`, `"exit {app}"` $\rightarrow$ `CLOSE_APP`.
 6. **Rule 0.52 (Window Management)**: `"minimize {app}"`, `"maximize {app}"`, `"focus {app}"` $\rightarrow$ `WINDOW_ACTION`.
 7. **Rule 0.53 (Clipboard AI)**: `"read clipboard"`, `"clipboard me kya hai"`, `"summarize clipboard"`, `"clear clipboard"` $\rightarrow$ `CLIPBOARD_ACTION`.
-8. **Rule 0.6 (Screenshot)**: `"screenshot"`, `"sc"`, `"sc le lo"`, `"screen capture"`, `"desktop photo"` $\rightarrow$ `OPEN_APP` (app_name: "screenshot").
-9. **Rule Hardware & Media Transport**:
+8. **Rule 0.54 (Smart Voice Notes & Scratchpad)**: `"note likho <text>"`, `"take a note <text>"`, `"show my notes"`, `"read latest note"`, `"clear notes"`, `"notes notepad me kholo"` $\rightarrow$ `NOTE_ACTION`.
+9. **Rule 0.55 (Document & Code AI)**: `"is document ki summary bana do"`, `"review this code for bugs"` $\rightarrow$ `DOCUMENT_ANALYSIS` / `CODE_ANALYSIS` (routes to Gemini AI Brain).
+10. **Rule 0.6 (Screenshot)**: `"screenshot"`, `"sc"`, `"sc le lo"`, `"screen capture"`, `"desktop photo"` $\rightarrow$ `OPEN_APP` (app_name: "screenshot").
+11. **Rule Hardware & Media Transport**:
    - Pause/Stop: `"chup"`, `"chup ho"`, `"ruk jao"`, `"pause"`, `"stop"`, `"band karo"`.
    - Play/Resume: `"bhai gaana chala de"`, `"gaana bajao"`, `"play"`, `"resume"` (resumes playback or searches & plays).
    - Track Navigation: `"next"`, `"skip"`, `"previous"`, `"prev"`.
    - Volume & Brightness: `"volume 50%"`, `"awaz badhao"`, `"light kam karo"`.
    - Power & Security: `"lock"`, `"pc lock karo"`, `"sleep"`.
-10. **ML Vectorizer & Naive Bayes**: Used for all remaining complex desktop tasks.
-11. **Clarification Barrier Removed**: `needs_clarification` is forced `False` so commands execute without stalling.
+12. **ML Vectorizer & Naive Bayes**: Used for all remaining complex desktop tasks.
+13. **Clarification Barrier Removed**: `needs_clarification` is forced `False` so commands execute without stalling.
 
 ---
 
@@ -107,5 +117,5 @@ The intent engine in `backend/app/services/intent_service.py` operates in priori
 2. **Never add artificial confirmation/clarification dialogs** for common user intents.
 3. **Preserve VAD silence timeout at ~0.45s**: Increasing this re-introduces latency.
 4. **Windows Pathing**: Always handle Windows backslashes with raw strings `r"..."` or `Path()`.
-5. **Always preserve 85/85 pytest tests**: Run `.\.venv\Scripts\python.exe -m pytest backend/tests` after any backend change.
+5. **Always preserve 245/245 pytest tests**: Run `.\.venv\Scripts\python.exe -m pytest backend/tests` after any backend change.
 6. **Port Integrity**: Frontend is locked to port `5173` (`strictPort: true` in `vite.config.ts`), and backend is locked to `8000`. Do not change these ports.

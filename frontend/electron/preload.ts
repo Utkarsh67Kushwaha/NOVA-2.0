@@ -8,5 +8,13 @@ contextBridge.exposeInMainWorld('novaAPI', {
   minimizeToTray: () => ipcRenderer.send('nova:minimize-to-tray'),
   quitApp: () => ipcRenderer.send('nova:quit-app'),
   openExternal: (url: string) => ipcRenderer.invoke('nova:open-external', url),
+  setCompactMode: (compact: boolean) => ipcRenderer.invoke('nova:set-compact-mode', compact),
+  onSummon: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('nova:summon', handler);
+    return () => {
+      ipcRenderer.removeListener('nova:summon', handler);
+    };
+  },
   platform: process.platform,
 });

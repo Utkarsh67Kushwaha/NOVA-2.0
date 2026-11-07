@@ -202,7 +202,7 @@ class WebSearchTool(BaseTool):
                 description="Search engine to use: google, duckduckgo, bing",
                 required=False,
                 default="google",
-                choices=["google", "duckduckgo", "bing"],
+                choices=["google", "duckduckgo", "bing", "youtube", "github", "wikipedia", "amazon", "stackoverflow", "reddit", "twitter", "x"],
             ),
         ]
 
@@ -224,6 +224,20 @@ class WebSearchTool(BaseTool):
             search_url = f"https://duckduckgo.com/?q={encoded_q}"
         elif engine == "bing":
             search_url = f"https://www.bing.com/search?q={encoded_q}"
+        elif engine == "youtube":
+            search_url = f"https://www.youtube.com/results?search_query={encoded_q}"
+        elif engine == "github":
+            search_url = f"https://github.com/search?q={encoded_q}"
+        elif engine == "wikipedia":
+            search_url = f"https://en.wikipedia.org/wiki/Special:Search?search={encoded_q}"
+        elif engine == "amazon":
+            search_url = f"https://www.amazon.in/s?k={encoded_q}"
+        elif engine == "stackoverflow":
+            search_url = f"https://stackoverflow.com/search?q={encoded_q}"
+        elif engine == "reddit":
+            search_url = f"https://www.reddit.com/search/?q={encoded_q}"
+        elif engine in ("twitter", "x"):
+            search_url = f"https://twitter.com/search?q={encoded_q}"
         else:
             search_url = f"https://www.google.com/search?q={encoded_q}"
 

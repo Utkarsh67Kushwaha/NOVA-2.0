@@ -1,14 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
-  Activity,
-  Cpu,
-  HardDrive,
-  Power,
-  RefreshCw,
-  Settings,
   ShieldCheck,
   Terminal,
-  Minimize2,
   CheckCircle2,
   Radio,
   Send,
@@ -25,10 +18,6 @@ import {
   XCircle,
   RotateCcw,
   Camera,
-  Bell,
-  Trash2,
-  Brain,
-  Key,
 } from 'lucide-react';
 import {
   HealthData,
@@ -41,6 +30,11 @@ import {
   AuditRecord,
   ReminderItem,
 } from './types';
+import { SpotlightHUD } from './components/SpotlightHUD';
+import { Header } from './components/Header';
+import { SystemMetricsGrid } from './components/SystemMetricsGrid';
+import { RemindersHub } from './components/RemindersHub';
+import { GeminiSettingsModal } from './components/GeminiSettingsModal';
 
 const BACKEND_URL = 'http://127.0.0.1:8000';
 
@@ -78,6 +72,44 @@ export default function App(): React.JSX.Element {
   const [isElectron, setIsElectron] = useState<boolean>(false);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+
+  // Spotlight Bar / Compact Floating HUD State
+  const [isCompactMode, setIsCompactMode] = useState<boolean>(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const toggleCompactMode = useCallback(async (enable?: boolean) => {
+    const nextMode = typeof enable === 'boolean' ? enable : !isCompactMode;
+    setIsCompactMode(nextMode);
+    if (window.novaAPI?.setCompactMode) {
+      await window.novaAPI.setCompactMode(nextMode);
+    }
+    if (nextMode) {
+      setTimeout(() => inputRef.current?.focus(), 120);
+    }
+  }, [isCompactMode]);
+
+  useEffect(() => {
+    if (window.novaAPI?.onSummon) {
+      const unsub = window.novaAPI.onSummon(() => {
+        setIsCompactMode(true);
+        if (window.novaAPI?.setCompactMode) {
+          window.novaAPI.setCompactMode(true);
+        }
+        setTimeout(() => inputRef.current?.focus(), 120);
+      });
+      return unsub;
+    }
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isCompactMode) {
+        toggleCompactMode(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isCompactMode, toggleCompactMode]);
 
   // Phase 2: ML Command State
   const [commandInput, setCommandInput] = useState<string>('');
@@ -639,176 +671,48 @@ export default function App(): React.JSX.Element {
     }
   };
 
+  if (isCompactMode) {
+    return (
+      <SpotlightHUD
+        geminiModel={geminiStatus?.model}
+        commandInput={commandInput}
+        setCommandInput={setCommandInput}
+        isListening={isListening}
+        isClassifying={isClassifying}
+        commandResult={commandResult}
+        voiceResult={voiceResult}
+        onExecute={() => handleClassifyCommand()}
+        onToggleListen={handleListenOnce}
+        onExpandDashboard={() => toggleCompactMode(false)}
+        onMinimize={handleMinimizeToTray}
+        inputRef={inputRef}
+      />
+    );
+  }
+
   return (
     <div className="flex flex-col h-screen w-screen bg-nova-dark text-slate-100 font-sans select-none overflow-hidden">
       {/* Top Navigation Bar */}
-      <header className="h-12 border-b border-nova-border bg-nova-panel flex items-center justify-between px-4 z-10 shrink-0">
-        <div className="flex items-center space-x-3">
-          <div className="flex items-center space-x-2">
-            <div className="w-3 h-3 rounded-full bg-nova-cyan animate-pulse shadow-[0_0_8px_#06b6d4]" />
-            <span className="font-bold tracking-wider text-sm text-white">
-              {health?.app ? `${health.app} v${health.version}` : 'NOVA 2.0'}
-            </span>
-          </div>
-          <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-cyan-950/80 text-nova-cyan border border-cyan-800/40">
-            Phase 4: Safe Tools & Execution
-          </span>
-          {isElectron && (
-            <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-purple-950/80 text-purple-300 border border-purple-800/40">
-              Desktop Shell (Sandboxed)
-            </span>
-          )}
-        </div>
-
-        <div className="flex items-center space-x-2">
-          {/* Connection Status Indicator */}
-          <div className="flex items-center space-x-2 px-2.5 py-1 rounded bg-nova-card border border-nova-border text-xs">
-            <Radio
-              className={`w-3.5 h-3.5 ${
-                isBackendConnected ? 'text-emerald-400 animate-pulse' : 'text-rose-500'
-              }`}
-            />
-            <span className="font-medium text-[11px]">
-              {isBackendConnected
-                ? `FastAPI: Connected (${latencyMs ?? 0}ms)`
-                : 'FastAPI: Disconnected'}
-            </span>
-          </div>
-
-          <button
-            onClick={handleManualRefresh}
-            disabled={isRefreshing}
-            className="p-1.5 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition"
-            title="Refresh Diagnostics"
-          >
-            <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-nova-cyan' : ''}`} />
-          </button>
-
-          {isElectron && (
-            <>
-              <button
-                onClick={handleMinimizeToTray}
-                className="p-1.5 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition"
-                title="Minimize to System Tray"
-              >
-                <Minimize2 className="w-4 h-4" />
-              </button>
-              <button
-                onClick={handleQuit}
-                className="p-1.5 rounded hover:bg-rose-900/40 text-slate-400 hover:text-rose-400 transition"
-                title="Quit NOVA"
-              >
-                <Power className="w-4 h-4" />
-              </button>
-            </>
-          )}
-        </div>
-      </header>
+      <Header
+        health={health}
+        isElectron={isElectron}
+        isBackendConnected={isBackendConnected}
+        latencyMs={latencyMs}
+        isRefreshing={isRefreshing}
+        onRefresh={handleManualRefresh}
+        onOpenSpotlight={() => toggleCompactMode(true)}
+        onMinimizeToTray={handleMinimizeToTray}
+        onQuit={handleQuit}
+      />
 
       {/* Main Scrollable Dashboard Content */}
       <main className="flex-1 overflow-y-auto p-6 space-y-5">
         {/* Hardware & System Resource Metrics Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          {/* CPU Card */}
-          <div className="p-4 rounded-xl bg-nova-panel border border-nova-border shadow-md space-y-2">
-            <div className="flex items-center justify-between text-slate-400 text-xs">
-              <span className="font-semibold uppercase tracking-wider flex items-center gap-1.5">
-                <Cpu className="w-4 h-4 text-nova-cyan" /> CPU Load
-              </span>
-              <span className="font-mono text-nova-cyan">
-                {systemStatus?.resources.cpu_percent ?? 0}%
-              </span>
-            </div>
-            <div className="w-full h-1.5 rounded-full bg-slate-800 overflow-hidden">
-              <div
-                className="h-full bg-nova-cyan transition-all duration-300"
-                style={{ width: `${systemStatus?.resources.cpu_percent ?? 0}%` }}
-              />
-            </div>
-            <p className="text-[11px] text-slate-500 truncate">
-              {systemStatus?.system.processor ?? 'AMD Ryzen 5 5600H'}
-            </p>
-          </div>
-
-          {/* RAM Card */}
-          <div className="p-4 rounded-xl bg-nova-panel border border-nova-border shadow-md space-y-2">
-            <div className="flex items-center justify-between text-slate-400 text-xs">
-              <span className="font-semibold uppercase tracking-wider flex items-center gap-1.5">
-                <Activity className="w-4 h-4 text-purple-400" /> Memory (RAM)
-              </span>
-              <span className="font-mono text-purple-400">
-                {systemStatus?.resources.ram_percent ?? 0}%
-              </span>
-            </div>
-            <div className="w-full h-1.5 rounded-full bg-slate-800 overflow-hidden">
-              <div
-                className="h-full bg-purple-500 transition-all duration-300"
-                style={{ width: `${systemStatus?.resources.ram_percent ?? 0}%` }}
-              />
-            </div>
-            <p className="text-[11px] text-slate-500">
-              {systemStatus
-                ? `${systemStatus.resources.ram_used_gb} GB used of ${systemStatus.resources.ram_total_gb} GB`
-                : '16.0 GB total'}
-            </p>
-          </div>
-
-          {/* Storage Card */}
-          <div className="p-4 rounded-xl bg-nova-panel border border-nova-border shadow-md space-y-2">
-            <div className="flex items-center justify-between text-slate-400 text-xs">
-              <span className="font-semibold uppercase tracking-wider flex items-center gap-1.5">
-                <HardDrive className="w-4 h-4 text-emerald-400" /> SSD Storage (C:)
-              </span>
-              <span className="font-mono text-emerald-400">
-                {systemStatus?.resources.disk_percent ?? 0}%
-              </span>
-            </div>
-            <div className="w-full h-1.5 rounded-full bg-slate-800 overflow-hidden">
-              <div
-                className="h-full bg-emerald-500 transition-all duration-300"
-                style={{ width: `${systemStatus?.resources.disk_percent ?? 0}%` }}
-              />
-            </div>
-            <p className="text-[11px] text-slate-500">
-              {systemStatus
-                ? `${systemStatus.resources.disk_free_gb} GB free of ${systemStatus.resources.disk_total_gb} GB`
-                : 'Storage ready'}
-            </p>
-          </div>
-
-          {/* Foundation & Settings Card */}
-          <div className="p-4 rounded-xl bg-nova-panel border border-nova-border shadow-md flex flex-col justify-between">
-            <div className="flex items-center justify-between text-slate-400 text-xs">
-              <span className="font-semibold uppercase tracking-wider flex items-center gap-1.5">
-                <Settings className="w-4 h-4 text-amber-400" /> Startup & Tray
-              </span>
-              <span className="text-emerald-400 flex items-center gap-1 text-[11px]">
-                <CheckCircle2 className="w-3 h-3" /> Ready
-              </span>
-            </div>
-
-            <div className="flex items-center justify-between pt-2">
-              <span className="text-xs text-slate-300">Run at Windows Login:</span>
-              <button
-                onClick={toggleAutoStartup}
-                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-                  autoStartup ? 'bg-nova-cyan' : 'bg-slate-700'
-                }`}
-              >
-                <span
-                  className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
-                    autoStartup ? 'translate-x-4' : 'translate-x-1'
-                  }`}
-                />
-              </button>
-            </div>
-
-            <div className="pt-2 border-t border-nova-border/60 flex items-center gap-2 text-[11px] text-slate-400">
-              <Activity className="w-3.5 h-3.5 text-purple-400" />
-              IPC Security: Sandboxed contextBridge
-            </div>
-          </div>
-        </div>
+        <SystemMetricsGrid
+          systemStatus={systemStatus}
+          autoStartup={autoStartup}
+          onToggleAutoStartup={toggleAutoStartup}
+        />
 
         {/* Phase 4: SAFE TOOLS & PERMISSION-CONTROLLED EXECUTION MODULE */}
         <div className="rounded-xl bg-gradient-to-r from-slate-900 to-nova-panel border border-emerald-500/30 shadow-xl p-5 space-y-4">
@@ -1247,274 +1151,28 @@ export default function App(): React.JSX.Element {
           )}
         </div>
 
-        {/* Phase 5: Reminders & Alarms System (Windows 11 Toast Notifications + SAPI5 TTS) */}
-        <div className="rounded-xl bg-gradient-to-r from-slate-900 to-nova-panel border border-amber-500/30 shadow-xl p-5 space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/30">
-                <Bell className="w-5 h-5 text-amber-400 animate-bounce" />
-              </div>
-              <div>
-                <h2 className="text-sm font-bold uppercase tracking-wider text-white flex items-center gap-2">
-                  Windows Toast Reminders & Alarms Hub
-                </h2>
-                <p className="text-[11px] text-slate-400">
-                  Background Scheduler • Native WinRT Toast Popups • Audio Chime • Spoken Voice Alerts
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <span className="text-[11px] px-2.5 py-1 rounded bg-amber-500/10 text-amber-300 border border-amber-500/30 font-mono">
-                {reminders.filter((r) => r.status === 'PENDING').length} Active Scheduled
-              </span>
-              <button
-                onClick={fetchReminders}
-                className="px-2.5 py-1 rounded bg-nova-card hover:bg-slate-700 text-slate-300 border border-nova-border text-xs flex items-center gap-1.5 transition"
-              >
-                <RotateCcw className="w-3 h-3 text-amber-400" />
-                Refresh
-              </button>
-            </div>
-          </div>
-
-          {/* Quick One-Click Reminder Presets */}
-          <div className="space-y-2">
-            <span className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider flex items-center gap-1.5">
-              <Clock className="w-3.5 h-3.5 text-amber-400" />
-              One-Click Presets:
-            </span>
-            <div className="flex flex-wrap gap-2">
-              <button
-                onClick={() => handleCreateReminder('💧 Drink Water & Stay Hydrated', 900)}
-                disabled={isCreatingReminder}
-                className="px-3 py-1.5 rounded-lg bg-nova-card hover:bg-slate-700 text-xs font-semibold text-slate-200 border border-nova-border flex items-center gap-1.5 transition"
-              >
-                💧 Drink Water (15m)
-              </button>
-              <button
-                onClick={() => handleCreateReminder('🧘 Stand Up & Stretch', 1800)}
-                disabled={isCreatingReminder}
-                className="px-3 py-1.5 rounded-lg bg-nova-card hover:bg-slate-700 text-xs font-semibold text-slate-200 border border-nova-border flex items-center gap-1.5 transition"
-              >
-                🧘 Posture & Stretch (30m)
-              </button>
-              <button
-                onClick={() => handleCreateReminder('☕ Coffee/Tea Break', 2700)}
-                disabled={isCreatingReminder}
-                className="px-3 py-1.5 rounded-lg bg-nova-card hover:bg-slate-700 text-xs font-semibold text-slate-200 border border-nova-border flex items-center gap-1.5 transition"
-              >
-                ☕ Tea Break (45m)
-              </button>
-              <button
-                onClick={() => handleCreateReminder('🧪 10 Second Test Alert', 10)}
-                disabled={isCreatingReminder}
-                className="px-3 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-xs font-bold text-amber-300 border border-amber-500/40 flex items-center gap-1.5 transition"
-              >
-                ⚡ Test 10s Toast Alert
-              </button>
-            </div>
-          </div>
-
-          {/* Custom Reminder Schedule Bar */}
-          <div className="flex flex-col sm:flex-row gap-2 pt-1">
-            <input
-              type="text"
-              value={customReminderTitle}
-              onChange={(e) => setCustomReminderTitle(e.target.value)}
-              placeholder="Custom reminder (e.g., 'Submit project report', 'Call doctor')..."
-              className="flex-1 px-3 py-2 rounded-lg bg-slate-900 border border-nova-border text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-400"
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  handleCreateReminder(customReminderTitle, customReminderSecs);
-                }
-              }}
-            />
-            <select
-              value={customReminderSecs}
-              onChange={(e) => setCustomReminderSecs(Number(e.target.value))}
-              className="px-3 py-2 rounded-lg bg-slate-900 border border-nova-border text-xs text-slate-200 focus:outline-none focus:border-amber-400"
-            >
-              <option value={10}>in 10 seconds</option>
-              <option value={60}>in 1 minute</option>
-              <option value={300}>in 5 minutes</option>
-              <option value={600}>in 10 minutes</option>
-              <option value={900}>in 15 minutes</option>
-              <option value={1800}>in 30 minutes</option>
-              <option value={3600}>in 1 hour</option>
-            </select>
-            <button
-              onClick={() => handleCreateReminder(customReminderTitle, customReminderSecs)}
-              disabled={isCreatingReminder || !customReminderTitle.trim()}
-              className="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-slate-950 font-bold text-xs flex items-center justify-center gap-1.5 transition"
-            >
-              <Bell className="w-3.5 h-3.5" />
-              Schedule Reminder
-            </button>
-          </div>
-
-          {/* Active Reminders List */}
-          <div className="space-y-2 pt-2 border-t border-nova-border/60">
-            <span className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider">
-              Upcoming & Recent Reminders:
-            </span>
-            {reminders.length === 0 ? (
-              <p className="text-xs text-slate-500 italic py-2">No active reminders. Schedule one above or say &quot;Hey NOVA, remind me to drink water in 10 minutes&quot;.</p>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                {reminders.slice(0, 6).map((rem) => {
-                  const now = Date.now() / 1000;
-                  const diff = Math.round(rem.due_timestamp - now);
-                  const isPending = rem.status === 'PENDING';
-                  const isDue = isPending && diff <= 0;
-
-                  return (
-                    <div
-                      key={rem.id}
-                      className={`p-3 rounded-lg border flex items-center justify-between text-xs transition ${
-                        isDue
-                          ? 'bg-amber-950/40 border-amber-500/60 animate-pulse'
-                          : isPending
-                          ? 'bg-slate-900/80 border-slate-700'
-                          : 'bg-slate-950/40 border-slate-800 opacity-60'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <Clock
-                          className={`w-4 h-4 shrink-0 ${
-                            isPending ? 'text-amber-400' : 'text-slate-500'
-                          }`}
-                        />
-                        <div className="min-w-0">
-                          <p className="font-semibold text-slate-200 truncate">{rem.title}</p>
-                          <p className="text-[10px] text-slate-400">
-                            {new Date(rem.due_timestamp * 1000).toLocaleTimeString()} •{' '}
-                            {isPending
-                              ? diff > 60
-                                ? `in ~${Math.round(diff / 60)} min`
-                                : diff > 0
-                                ? `in ${diff}s`
-                                : 'Triggering now!'
-                              : rem.status}
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span
-                          className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${
-                            rem.status === 'PENDING'
-                              ? 'bg-amber-500/20 text-amber-300'
-                              : rem.status === 'TRIGGERED'
-                              ? 'bg-emerald-500/20 text-emerald-300'
-                              : 'bg-slate-700 text-slate-400'
-                          }`}
-                        >
-                          {rem.status}
-                        </span>
-                        {isPending && (
-                          <button
-                            onClick={() => handleDeleteReminder(rem.id)}
-                            className="p-1 rounded hover:bg-red-500/20 text-slate-400 hover:text-red-400 transition"
-                            title="Cancel Reminder"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </div>
+        {/* Phase 5: Reminders & Alarms System */}
+        <RemindersHub
+          reminders={reminders}
+          customReminderTitle={customReminderTitle}
+          setCustomReminderTitle={setCustomReminderTitle}
+          customReminderSecs={customReminderSecs}
+          setCustomReminderSecs={setCustomReminderSecs}
+          isCreatingReminder={isCreatingReminder}
+          onRefresh={fetchReminders}
+          onCreateReminder={handleCreateReminder}
+          onDeleteReminder={handleDeleteReminder}
+        />
 
         {/* Universal AI Conversational Brain & Gemini Intelligence */}
-        <div className="rounded-xl bg-nova-panel border border-nova-border shadow-lg p-5 space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Brain className="w-5 h-5 text-purple-400" />
-              <h2 className="text-sm font-bold uppercase tracking-wider text-white">
-                Universal AI Conversational Brain (Gemini &amp; Offline Fallback)
-              </h2>
-            </div>
-            <div className="flex items-center gap-2">
-              <span
-                className={`text-[11px] px-2.5 py-0.5 rounded-full border flex items-center gap-1.5 ${
-                  geminiStatus?.is_configured
-                    ? 'bg-purple-500/10 text-purple-300 border-purple-500/30'
-                    : 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
-                }`}
-              >
-                <span
-                  className={`w-1.5 h-1.5 rounded-full ${
-                    geminiStatus?.is_configured ? 'bg-purple-400' : 'bg-emerald-400'
-                  }`}
-                />
-                {geminiStatus?.is_configured ? 'Gemini 2.5 Flash Online' : 'Smart Offline Brain Active'}
-              </span>
-            </div>
-          </div>
-
-          <p className="text-xs text-slate-400 leading-relaxed">
-            NOVA is equipped with universal voice &amp; conversational intelligence. It effortlessly handles broken Hindi, pure English, casual Hinglish with slang words (&quot;bhai&quot;, &quot;yaar&quot;, &quot;zara&quot;), system controls, and open-domain chat without ever throwing confusion errors.
-          </p>
-
-          {/* Gemini API Key Configuration Row */}
-          <div className="p-3.5 rounded-lg bg-nova-dark/70 border border-nova-border flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-            <div className="flex items-center gap-2 text-xs text-slate-300 shrink-0">
-              <Key className="w-4 h-4 text-purple-400" />
-              <span>Google Gemini API Key:</span>
-            </div>
-            <input
-              type="password"
-              value={apiKeyInput}
-              onChange={(e) => setApiKeyInput(e.target.value)}
-              placeholder={geminiStatus?.has_key ? '•••••••••••••••••••••••••••••••• (Configured)' : 'Enter your free Google Gemini API key...'}
-              className="flex-1 px-3 py-1.5 rounded-md bg-nova-card border border-nova-border focus:border-purple-400 focus:outline-none text-xs text-white placeholder-slate-500 font-mono"
-            />
-            <button
-              onClick={handleSaveApiKey}
-              disabled={isSavingKey || !apiKeyInput.trim()}
-              className="px-4 py-1.5 rounded-md bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-semibold text-xs transition shrink-0"
-            >
-              {isSavingKey ? 'Saving...' : 'Save API Key'}
-            </button>
-          </div>
-
-          {/* Conversational & Casual Voice Quick Testers */}
-          <div className="space-y-1.5">
-            <span className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider flex items-center gap-1.5">
-              <Sparkles className="w-3.5 h-3.5 text-purple-400" />
-              Casual Voice &amp; Conversational AI Prompts:
-            </span>
-            <div className="flex flex-wrap gap-2">
-              {[
-                'tum kaun ho',
-                'kaise ho bhai',
-                'kya kar sakte ho',
-                'ek mast chutkula sunao',
-                'aaj kya date hai',
-                'bhai zara screen ka photo le le',
-                'bhai thoda volume badha de yaar',
-                'bhai gaana band kar do bohot shor hai',
-                'screen capture karo',
-              ].map((sample, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => {
-                    setCommandInput(sample);
-                    handleClassifyCommand(sample);
-                  }}
-                  className="text-xs px-2.5 py-1 rounded-md bg-purple-950/30 hover:bg-purple-900/40 text-purple-200 border border-purple-800/40 transition font-mono"
-                >
-                  {sample}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
+        <GeminiSettingsModal
+          geminiStatus={geminiStatus}
+          apiKeyInput={apiKeyInput}
+          setApiKeyInput={setApiKeyInput}
+          isSavingKey={isSavingKey}
+          onSaveApiKey={handleSaveApiKey}
+          onSelectPrompt={(prompt) => handleClassifyCommand(prompt)}
+        />
 
         {/* Phase 2: Live ML Intent Classifier Testing Module */}
         <div className="rounded-xl bg-nova-panel border border-nova-border shadow-lg p-5 space-y-4">

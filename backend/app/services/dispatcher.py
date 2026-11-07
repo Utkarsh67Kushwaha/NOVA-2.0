@@ -25,6 +25,7 @@ import logging
 from typing import Any, Dict, Optional, Tuple
 
 from backend.app.services.gemini_service import gemini_service
+from backend.app.services.context_manager import context_manager
 from backend.app.tools import default_registry
 from backend.app.tools.base import ToolResult
 
@@ -53,6 +54,9 @@ def dispatch_intent(
     reg = registry or default_registry
     intent: str = prediction.get("intent", "UNKNOWN_INTENT")
     entities: Dict[str, Any] = prediction.get("entities", {})
+    # Resolve anaphoric pronouns using session context memory
+    entities = context_manager.resolve_pronoun_reference(original_query, intent, entities)
+    prediction["entities"] = entities
 
     live_response: str = ""
     executed_tool: Optional[str] = None
@@ -118,10 +122,11 @@ def dispatch_intent(
 
         elif intent == "BROWSER_ACTION":
             search_query = entities.get("search_query", original_query)
-            t_res = reg.execute("web_search", {"query": search_query})
+            engine = entities.get("engine", "google")
+            t_res = reg.execute("web_search", {"query": search_query, "engine": engine})
             executed_tool = "web_search"
             tool_result = t_res.model_dump()
-            live_response = f"Searching for {search_query}."
+            live_response = t_res.output
 
         elif intent == "FILE_SEARCH":
             target = entities.get("file_name", entities.get("file_query", ""))
@@ -150,7 +155,44 @@ def dispatch_intent(
             tool_result = t_res.model_dump()
             live_response = t_res.output
 
-        elif intent in ("AI_CHAT", "UNKNOWN_INTENT"):
+        elif intent == "NOTE_ACTION":
+            action = entities.get("action", "list")
+            content = entities.get("content", "")
+            t_res = reg.execute("note_tool", {"action": action, "content": content})
+            executed_tool = "note_tool"
+            tool_result = t_res.model_dump()
+            live_response = t_res.output
+
+        elif intent == "SCREEN_VISION":
+            prompt = entities.get("prompt", original_query)
+            t_res = reg.execute("screen_vision", {"prompt": prompt})
+            executed_tool = "screen_vision"
+            tool_result = t_res.model_dump()
+            live_response = t_res.output
+
+        elif intent == "CALCULATE":
+            expr = entities.get("expression", original_query)
+            t_res = reg.execute("calculator_tool", {"expression": expr})
+            executed_tool = "calculator_tool"
+            tool_result = t_res.model_dump()
+            live_response = t_res.output
+
+        elif intent == "SYSTEM_MAINTENANCE":
+            action = entities.get("action", "open_folder")
+            target = entities.get("target", "downloads")
+            t_res = reg.execute("system_maintenance", {"action": action, "target": target})
+            executed_tool = "system_maintenance"
+            tool_result = t_res.model_dump()
+            live_response = t_res.output
+
+        elif intent == "KEYBOARD_ACTION":
+            action = entities.get("action", "refresh")
+            t_res = reg.execute("keyboard_shortcut", {"action": action})
+            executed_tool = "keyboard_shortcut"
+            tool_result = t_res.model_dump()
+            live_response = t_res.output
+
+        elif intent in ("DOCUMENT_ANALYSIS", "CODE_ANALYSIS", "AI_CHAT", "UNKNOWN_INTENT"):
             # NOTE: callers that run inside async FastAPI handlers should wrap
             # this in `loop.run_in_executor(None, gemini_service.ask, query)`
             # to avoid blocking the event loop.  The voice manager runs in a
@@ -171,6 +213,19 @@ def dispatch_intent(
     prediction["executed_tool"] = executed_tool
     prediction["tool_result"] = tool_result
     prediction["needs_clarification"] = False
+
+    # Record turn in multi-turn conversation context manager
+    try:
+        context_manager.record_turn(
+            query=original_query,
+            intent=intent,
+            entities=entities,
+            executed_tool=executed_tool,
+            tool_result=tool_result,
+            live_response=live_response,
+        )
+    except Exception as exc:
+        logger.warning("Failed to record conversation turn: %s", exc)
 
     return live_response, executed_tool, tool_result
 

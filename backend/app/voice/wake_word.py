@@ -4,7 +4,7 @@ from typing import Tuple
 
 logger = logging.getLogger("nova.voice.wake_word")
 
-WAKE_REGEX = r"\b(?:hey\s+|ok\s+|hello\s+|hi\s+|arey\s+|oye\s+|suno\s+|are\s+you\s+there\s+)?(?:nova|noah|noba|knower)\b"
+WAKE_REGEX = r"\b(?:hey\s+|ok\s+|hello\s+|hi\s+|arey\s+|oye\s+|suno\s+|bhai\s+|yaar\s+|are\s+you\s+there\s+)?(?:nova|noah|noba|knower)\b"
 
 
 class WakeWordDetector:
