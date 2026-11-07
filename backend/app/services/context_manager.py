@@ -64,7 +64,9 @@ class ConversationContextManager:
             self.last_app = entities["window_title"]
 
         # 2. Update last file if referenced
-        if entities.get("file_name"):
+        if entities.get("file_path"):
+            self.last_file = entities["file_path"]
+        elif entities.get("file_name"):
             self.last_file = entities["file_name"]
         elif entities.get("file_query"):
             self.last_file = entities["file_query"]
@@ -145,6 +147,13 @@ class ConversationContextManager:
                 resolved["file_name"] = self.last_file
                 resolved["resolved_from_context"] = True
                 logger.info("Context resolved FILE_SEARCH target: '%s'", self.last_file)
+
+        # Case 5: DOCUMENT_ANALYSIS with pronoun ("isko explain karo", "analyze this file")
+        elif intent in ("DOCUMENT_ANALYSIS", "CODE_ANALYSIS"):
+            if (query_has_pronoun or not resolved.get("file_path")) and self.last_file:
+                resolved["file_path"] = self.last_file
+                resolved["resolved_from_context"] = True
+                logger.info("Context resolved DOCUMENT_ANALYSIS target: '%s'", self.last_file)
 
         return resolved
 

@@ -192,7 +192,35 @@ def dispatch_intent(
             tool_result = t_res.model_dump()
             live_response = t_res.output
 
-        elif intent in ("DOCUMENT_ANALYSIS", "CODE_ANALYSIS", "AI_CHAT", "UNKNOWN_INTENT"):
+        elif intent == "WEATHER":
+            city = entities.get("city", "")
+            t_res = reg.execute("weather_tool", {"city": city})
+            executed_tool = "weather_tool"
+            tool_result = t_res.model_dump()
+            live_response = t_res.output
+
+        elif intent == "WHATSAPP_MESSAGE":
+            msg = entities.get("message", "Hello")
+            phone = entities.get("phone", "")
+            t_res = reg.execute("whatsapp_tool", {"message": msg, "phone": phone})
+            executed_tool = "whatsapp_tool"
+            tool_result = t_res.model_dump()
+            live_response = t_res.output
+
+        elif intent in ("DOCUMENT_ANALYSIS", "CODE_ANALYSIS"):
+            file_path = entities.get("file_path", "")
+            prompt = entities.get("prompt", original_query)
+            if file_path:
+                t_res = reg.execute("analyze_document", {"file_path": file_path, "prompt": prompt})
+                executed_tool = "analyze_document"
+                tool_result = t_res.model_dump()
+                live_response = t_res.output
+            else:
+                live_response = gemini_service.ask(original_query)
+                executed_tool = "gemini_service"
+                tool_result = {"status": "success", "answer": live_response}
+
+        elif intent in ("AI_CHAT", "UNKNOWN_INTENT"):
             # NOTE: callers that run inside async FastAPI handlers should wrap
             # this in `loop.run_in_executor(None, gemini_service.ask, query)`
             # to avoid blocking the event loop.  The voice manager runs in a

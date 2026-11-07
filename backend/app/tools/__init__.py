@@ -27,6 +27,9 @@ from backend.app.tools.desktop_tools import (
     KeyboardShortcutTool,
 )
 from backend.app.tools.browser_tools import OpenUrlTool, WebSearchTool, PlayMusicTool
+from backend.app.tools.weather_tool import WeatherTool
+from backend.app.tools.messaging_tool import WhatsAppTool
+from backend.app.tools.doc_analysis_tool import DocAnalysisTool
 from backend.app.tools.file_tools import (
     ListFilesTool,
     SearchFilesTool,
@@ -64,6 +67,9 @@ def setup_default_tools(registry: ToolRegistry = default_registry) -> ToolRegist
     registry.register(SearchFilesTool())
     registry.register(ReadTextFileTool())
     registry.register(CreateFileTool())
+    registry.register(WeatherTool())
+    registry.register(WhatsAppTool())
+    registry.register(DocAnalysisTool())
 
     return registry
 
@@ -88,4 +94,7 @@ __all__ = [
     "ClipboardTool",
     "PlayMusicTool",
     "NoteTool",
+    "WeatherTool",
+    "WhatsAppTool",
+    "DocAnalysisTool",
 ]

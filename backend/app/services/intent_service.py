@@ -383,7 +383,73 @@ class IntentClassifierService:
             }
 
         is_search_query = any(w in clean for w in ["search", "google", "khojo", "dhoondo", "find"])
-        if not is_search_query and any(w in clean for w in ["time", "samay", "kitne baje", "kya time", "date", "tareekh", "today", "mausam", "weather"]):
+
+        # 0.21 Live Real-Time Weather Intelligence
+        if not is_search_query and any(w in clean for w in ["weather", "mausam", "temperature", "taapman"]):
+            city_match = (
+                re.search(r'\b(?:weather|mausam|temperature|taapman)\s+(?:in|of|me|ka|ki)\s+([a-zA-Z]+)\b', clean)
+                or re.search(r'\b([a-zA-Z]+)\s+(?:ka|ki|me|in)\s+(?:weather|mausam|temperature|taapman)\b', clean)
+                or re.search(r'\b(?:weather|mausam|temperature|taapman)\s+([a-zA-Z]+)\b', clean)
+            )
+            city = ""
+            if city_match:
+                candidate = city_match.group(1).lower().strip()
+                if candidate not in ("kaisa", "kya", "aaj", "today", "hai", "batao", "bata", "check", "live", "kitna"):
+                    city = candidate
+
+            return {
+                "query": text,
+                "intent": "WEATHER",
+                "raw_intent": "WEATHER",
+                "confidence": 0.98,
+                "confidence_percent": 98.0,
+                "threshold": self.confidence_threshold,
+                "needs_clarification": False,
+                "entities": {"city": city},
+                "model_name": "RulePriority-LiveWeather",
+                "top_probabilities": {"WEATHER": 0.98},
+            }
+
+        # 0.23 Document & Code Content Analysis
+        doc_ext_match = re.search(r'\b([\w\-_\./\\]+\.(?:md|py|json|txt|js|ts|tsx|html|css|yaml|yml|csv))\b', clean, re.IGNORECASE)
+        has_analysis_word = any(w in clean for w in ["analyze", "explain", "review", "summary", "summarize", "padho", "samjhao"]) or (doc_ext_match and "check" in clean)
+        is_anaphoric_file_doc = any(p in clean for p in ["isko", "ise", "use", "is file", "this file"]) and any(w in clean for w in ["analyze", "explain", "review", "summary", "summarize", "samjhao"])
+        if (doc_ext_match and has_analysis_word) or is_anaphoric_file_doc:
+            file_target = doc_ext_match.group(1).strip() if doc_ext_match else ""
+            return {
+                "query": text,
+                "intent": "DOCUMENT_ANALYSIS",
+                "raw_intent": "DOCUMENT_ANALYSIS",
+                "confidence": 0.98,
+                "confidence_percent": 98.0,
+                "threshold": self.confidence_threshold,
+                "needs_clarification": False,
+                "entities": {"file_path": file_target, "prompt": text},
+                "model_name": "RulePriority-DocAnalysis",
+                "top_probabilities": {"DOCUMENT_ANALYSIS": 0.98},
+            }
+
+        # 0.22 WhatsApp Messaging Automation
+        if "whatsapp" in clean and any(w in clean for w in ["message", "msg", "bhejo", "bhej", "send", "text"]):
+            phone_match = re.search(r'\b(?:to|par|pe|number)?\s*(\+?\d{10,12})\b', clean)
+            phone = phone_match.group(1) if phone_match else ""
+            msg_match = re.search(r'(?::|message|msg|text|likho)\s+(.+)$', text, re.IGNORECASE)
+            msg = msg_match.group(1).strip() if msg_match else "Hello from NOVA!"
+
+            return {
+                "query": text,
+                "intent": "WHATSAPP_MESSAGE",
+                "raw_intent": "WHATSAPP_MESSAGE",
+                "confidence": 0.98,
+                "confidence_percent": 98.0,
+                "threshold": self.confidence_threshold,
+                "needs_clarification": False,
+                "entities": {"phone": phone, "message": msg},
+                "model_name": "RulePriority-WhatsAppMessage",
+                "top_probabilities": {"WHATSAPP_MESSAGE": 0.98},
+            }
+
+        if not is_search_query and any(w in clean for w in ["time", "samay", "kitne baje", "kya time", "date", "tareekh", "today"]):
             return {
                 "query": text,
                 "intent": "AI_CHAT",
